@@ -15,7 +15,7 @@
  * Sin dependencias de React ni de Supabase: lógica pura, con tests.
  */
 import {
-  inicioDeCiclo, finDeCiclo, esDiaHabilISO, familiaEnvase, esLineaFija,
+  inicioDeCiclo, finDeCiclo, ciclosDe, esDiaHabilISO, familiaEnvase, esLineaFija, estaFueraDeProduccion,
   LEAD_TIME_INSUMOS_SEMANAS, type EnvaseBucket, type FamiliaEnvase,
 } from './reglas'
 
@@ -79,19 +79,29 @@ export interface AvanceCiclo {
 export interface DemandaConRango { media: number; min: number; max: number }
 
 /**
+ * Demanda de cada ciclo de una serie: el ciclo en curso con el ritmo real de lo
+ * que va del ciclo (no tiene forecast: está incompleto) y los siguientes con el
+ * forecast multiplicado por `factor` (el escenario de venta: 1 = el modelo,
+ * 1,2 = un 20% más). El escenario no toca el ciclo en curso: eso ya es venta real.
+ */
+function ciclosDeDemanda(serie: SerieDemanda, avance: AvanceCiclo, factor = 1) {
+  const ritmo = avance.diasHabilesTranscurridos > 0 ? serie.litrosMesEnCurso / avance.diasHabilesTranscurridos : 0
+  const cicloActual = ritmo * avance.diasHabilesEnCiclo
+  return [
+    { mes: avance.mes, media: cicloActual, min: cicloActual, max: cicloActual },
+    ...serie.puntos.filter(p => p.tipo === 'forecast' && p.mes > avance.mes).map(p => ({
+      mes: p.mes, media: p.litros * factor, min: (p.litrosMin ?? p.litros) * factor, max: (p.litrosMax ?? p.litros) * factor,
+    })),
+  ]
+}
+
+/**
  * Litros que se van a vender entre dos fechas: suma el forecast ciclo a ciclo,
  * prorrateando por días los ciclos cortados. El ciclo en curso no tiene
  * forecast (está incompleto): ahí se usa el ritmo real de lo que va del ciclo.
  */
-export function demandaProyectadaConRangoEnPeriodo(serie: SerieDemanda, avance: AvanceCiclo, desdeISO: string, hastaISO: string): DemandaConRango {
-  const ritmo = avance.diasHabilesTranscurridos > 0 ? serie.litrosMesEnCurso / avance.diasHabilesTranscurridos : 0
-  const cicloActual = ritmo * avance.diasHabilesEnCiclo
-  const ciclos = [
-    { mes: avance.mes, media: cicloActual, min: cicloActual, max: cicloActual },
-    ...serie.puntos.filter(p => p.tipo === 'forecast' && p.mes !== avance.mes).map(p => ({
-      mes: p.mes, media: p.litros, min: p.litrosMin ?? p.litros, max: p.litrosMax ?? p.litros,
-    })),
-  ]
+export function demandaProyectadaConRangoEnPeriodo(serie: SerieDemanda, avance: AvanceCiclo, desdeISO: string, hastaISO: string, factor = 1): DemandaConRango {
+  const ciclos = ciclosDeDemanda(serie, avance, factor)
   let media = 0, min = 0, max = 0
   for (const c of ciclos) {
     const ini = inicioDeCiclo(c.mes), fin = finDeCiclo(c.mes)
@@ -103,8 +113,47 @@ export function demandaProyectadaConRangoEnPeriodo(serie: SerieDemanda, avance: 
   }
   return { media, min, max }
 }
-export function demandaProyectadaEnPeriodo(serie: SerieDemanda, avance: AvanceCiclo, desdeISO: string, hastaISO: string): number {
-  return demandaProyectadaConRangoEnPeriodo(serie, avance, desdeISO, hastaISO).media
+export function demandaProyectadaEnPeriodo(serie: SerieDemanda, avance: AvanceCiclo, desdeISO: string, hastaISO: string, factor = 1): number {
+  return demandaProyectadaConRangoEnPeriodo(serie, avance, desdeISO, hastaISO, factor).media
+}
+
+/**
+ * Días HÁBILES que alcanzan `disponible` litros consumiendo la demanda ciclo a
+ * ciclo: cada día hábil se descuenta la venta diaria de SU ciclo (litros del
+ * ciclo ÷ días hábiles del ciclo). Así un stock que en noviembre "alcanza 60
+ * días" al ritmo de noviembre se ve como lo que es si en diciembre la venta
+ * sube 40%.
+ *
+ * Antes (hasta 17-nov-2026) se dividía el disponible por el ritmo de las
+ * próximas 4 semanas: en la previa de la temporada alta todas las fechas de
+ * quiebre quedaban optimistas.
+ *
+ * Devuelve `agotado: false` si el stock dura más allá del último ciclo con
+ * forecast (los días son entonces los que hay hasta ese ciclo, un mínimo).
+ */
+export function diasHastaAgotar(series: SerieDemanda[], avance: AvanceCiclo, hoyISO: string, disponible: number, factor = 1): { dias: number; agotado: boolean } | null {
+  // Venta por día hábil de cada ciclo, sumando las series del grupo.
+  const tasa = new Map<string, number>()
+  let ultimoMes = avance.mes
+  for (const s of series) {
+    for (const c of ciclosDeDemanda(s, avance, factor)) {
+      const habiles = Math.max(1, diasHabilesEntre(inicioDeCiclo(c.mes), finDeCiclo(c.mes)))
+      tasa.set(c.mes, (tasa.get(c.mes) ?? 0) + c.media / habiles)
+      if (c.mes > ultimoMes) ultimoMes = c.mes
+    }
+  }
+  if (![...tasa.values()].some(v => v > 0)) return null
+  const fin = finDeCiclo(ultimoMes)
+  let restante = disponible
+  let dias = 0
+  for (let d = sumarDiasCalISO(hoyISO, 1); d <= fin; d = sumarDiasCalISO(d, 1)) {
+    if (!esDiaHabilISO(d)) continue
+    const venta = tasa.get(ciclosDe(d)[0]) ?? 0
+    if (venta > 0 && restante < venta) return { dias: dias + restante / venta, agotado: true }
+    restante -= venta
+    dias++
+  }
+  return { dias, agotado: false }
 }
 
 /** ¿Algún ciclo del período trae un empuje estacional fuerte (≥15% del total)? */
@@ -145,6 +194,8 @@ export interface CoberturaFamilia {
   disponibleLitros: number | null
   /** Latas o barriles físicos en bodega (no incluye lo que viene en producción). */
   disponibleUnidades: number | null
+  /** Parte del disponible que todavía está en tanque (fermentando / sin envasar). */
+  enProduccionLitros: number
   /** Litros por envase de esta familia (30 en barril; promedio real en lata). */
   litrosPorUnidad: number | null
   stockSeguridadLitros: number
@@ -152,8 +203,11 @@ export interface CoberturaFamilia {
   leadTimeSemanas: number
   /** Litros por día hábil esperados las próximas 4 semanas. */
   ritmoDiario: number
-  /** Días HÁBILES que alcanza el disponible al ritmo esperado (null = sin ventas). */
+  /** Días HÁBILES que alcanza el disponible consumiendo la venta proyectada
+   *  ciclo a ciclo (null = sin ventas). */
   diasCobertura: number | null
+  /** El stock dura más que el último ciclo con forecast: `diasCobertura` es un mínimo. */
+  duraMasQueElForecast: boolean
   fechaQuiebre: string | null
   /** Último día hábil para empezar a cocinar y llegar antes del quiebre. */
   fechaLimiteCocer: string | null
@@ -188,6 +242,9 @@ export interface OpcionesCobertura {
   hastaISO: string
   /** Días hábiles antes de la fecha límite de cocción en que ya se pide reponer. */
   avisoDiasHabiles?: number
+  /** Escenario de venta: multiplica el forecast de los ciclos que vienen
+   *  (1 = el modelo tal cual). No toca la venta real del ciclo en curso. */
+  factorDemanda?: number
 }
 
 const fCorta = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString('es-CL', { day: '2-digit', month: 'short', timeZone: 'UTC' })
@@ -196,9 +253,12 @@ const fCorta = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString('es-
  * Cobertura de todos los productos que tienen colchón calculado.
  *
  * Reglas (las mismas en todo el módulo):
- *  - ritmo = demanda proyectada de las próximas 4 semanas ÷ días hábiles de
- *    esas 4 semanas (mezcla el ritmo real del ciclo en curso con el forecast).
- *  - días de cobertura = disponible ÷ ritmo; quiebre = hoy + esos días hábiles.
+ *  - ritmo (lo que se muestra) = demanda proyectada de las próximas 4 semanas
+ *    ÷ días hábiles de esas 4 semanas.
+ *  - días de cobertura: se consume la demanda ciclo a ciclo (`diasHastaAgotar`),
+ *    no el ritmo de las 4 semanas; quiebre = hoy + esos días hábiles.
+ *  - toda la demanda futura se multiplica por `factorDemanda` (escenario).
+ *  - los productos fuera de producción (reglas.ts) no entran.
  *  - fecha límite de cocción = quiebre − lead time; de insumos = quiebre −
  *    (lead time + gestión de insumos).
  *  - a producir = demanda hasta la fecha elegida + colchón − disponible.
@@ -209,6 +269,7 @@ const fCorta = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString('es-
 export function calcularCobertura(series: SerieDemanda[], colchones: ColchonEnvase[], avance: AvanceCiclo, op: OpcionesCobertura): CoberturaProducto[] {
   const { hoyISO, hastaISO } = op
   const aviso = op.avisoDiasHabiles ?? 10
+  const factor = op.factorDemanda ?? 1
   const fin4 = sumarDiasCalISO(hoyISO, 27)
   const habiles4 = Math.max(1, diasHabilesEntre(hoyISO, fin4))
   const limiteAviso = sumarDiasHabilesISO(hoyISO, aviso)
@@ -218,7 +279,7 @@ export function calcularCobertura(series: SerieDemanda[], colchones: ColchonEnva
   const grupos = new Map<string, Grupo>()
   for (const c of colchones) {
     const fam = familiaEnvase(c.envase)
-    if (!fam) continue
+    if (!fam || estaFueraDeProduccion(c.producto)) continue
     const k = `${c.producto}|${fam}`
     if (!grupos.has(k)) grupos.set(k, { producto: c.producto, categoria: c.categoria, familia: fam, colchones: [], series: [] })
     grupos.get(k)!.colchones.push(c)
@@ -245,13 +306,15 @@ export function calcularCobertura(series: SerieDemanda[], colchones: ColchonEnva
     const rop = g.colchones.reduce((s, c) => s + c.puntoReordenLitros, 0)
     const lead = Math.max(0, ...g.colchones.map(c => c.leadTimeSemanas))
 
-    const demanda4 = g.series.reduce((s, x) => s + demandaProyectadaEnPeriodo(x, avance, hoyISO, fin4), 0)
+    const demanda4 = g.series.reduce((s, x) => s + demandaProyectadaEnPeriodo(x, avance, hoyISO, fin4, factor), 0)
     const ritmo = demanda4 / habiles4
-    const demandaHorizonte = hastaISO > hoyISO ? g.series.reduce((s, x) => s + demandaProyectadaEnPeriodo(x, avance, hoyISO, hastaISO), 0) : 0
+    const demandaHorizonte = hastaISO > hoyISO ? g.series.reduce((s, x) => s + demandaProyectadaEnPeriodo(x, avance, hoyISO, hastaISO, factor), 0) : 0
     const altaDemanda = hastaISO > hoyISO && g.series.some(x => vieneAltaDemanda(x, hoyISO, hastaISO))
 
-    const dias = disponible != null && ritmo > 0 ? disponible / ritmo : null
-    const fechaQuiebre = dias != null ? sumarDiasHabilesISO(hoyISO, dias) : null
+    const agota = disponible != null ? diasHastaAgotar(g.series, avance, hoyISO, disponible, factor) : null
+    const dias = agota ? agota.dias : null
+    // Si el stock dura más que el forecast no hay fecha de quiebre que proyectar.
+    const fechaQuiebre = agota?.agotado ? sumarDiasHabilesISO(hoyISO, agota.dias) : null
     const fechaLimiteCocer = fechaQuiebre ? restarDiasHabilesISO(fechaQuiebre, lead * 5) : null
     const fechaLimiteInsumos = fechaQuiebre ? restarDiasHabilesISO(fechaQuiebre, (lead + LEAD_TIME_INSUMOS_SEMANAS) * 5) : null
     const aProducir = disponible != null ? Math.max(0, Math.round(demandaHorizonte + ss - disponible)) : Math.round(demandaHorizonte + ss)
@@ -266,15 +329,19 @@ export function calcularCobertura(series: SerieDemanda[], colchones: ColchonEnva
     if (disponible == null) partes.push('No aparece en el último informe de stock.')
     else {
       partes.push(`Hay ${Math.round(disponible)} L (colchón ${Math.round(ss)} L, reponer bajo ${Math.round(rop)} L).`)
-      if (dias != null) partes.push(`Al ritmo de ${ritmo.toFixed(1)} L por día hábil alcanza ${Math.round(dias)} días hábiles.`)
+      if (dias != null) partes.push(agota?.agotado
+        ? `Las próximas 4 semanas se esperan ${ritmo.toFixed(1)} L por día hábil; con la venta proyectada ciclo a ciclo alcanza ${Math.round(dias)} días hábiles.`
+        : `Alcanza más de ${Math.round(dias)} días hábiles: dura más allá del último mes con forecast.`)
       if (fechaLimiteCocer) partes.push(fechaLimiteCocer <= hoyISO ? `Debió cocinarse antes del ${fCorta(fechaLimiteCocer)}.` : `Cocinar antes del ${fCorta(fechaLimiteCocer)}.`)
     }
     if (altaDemanda) partes.push('Se viene temporada alta en el período.')
 
     const fila: CoberturaFamilia = {
       familia: g.familia, disponibleLitros: disponible != null ? Math.round(disponible) : null, disponibleUnidades: unidades,
+      enProduccionLitros: Math.round(g.colchones.reduce((s, c) => s + c.litrosEnProduccion, 0)),
       litrosPorUnidad, stockSeguridadLitros: Math.round(ss), puntoReordenLitros: Math.round(rop), leadTimeSemanas: lead,
       ritmoDiario: Math.round(ritmo * 10) / 10, diasCobertura: dias != null ? Math.round(dias) : null,
+      duraMasQueElForecast: agota != null && !agota.agotado,
       fechaQuiebre, fechaLimiteCocer, fechaLimiteInsumos, demandaHorizonte: Math.round(demandaHorizonte),
       aProducirLitros: aProducir, estado, altaDemanda, motivo: partes.join(' '),
     }

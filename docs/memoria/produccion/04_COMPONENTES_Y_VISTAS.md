@@ -63,6 +63,15 @@ graph TD
 
 **Banco de pruebas**: `/dev/produccion/completo` (sólo en desarrollo) monta el módulo entero con datos inventados (`app/dev/produccion/completo/fixturesCompletos.ts`) para revisar las cinco pestañas en modo oscuro y claro sin login.
 
+## Pestaña Temporada y limpieza de Hoy (17-nov-2026)
+
+- **`vistas/TabTemporada.tsx`** (segunda pestaña): la temporada alta (ciclos dic-mar) en una pantalla, para reuniones de proyección. Cuatro cifras (venta esperada, ya programado, falta producir, primer quiebre), barras por ciclo de venta esperada vs. año pasado vs. capacidad de planta (Total / Cerveza / Kombucha), tabla por ciclo, balance por línea y la lista de formatos que se quiebran antes del cierre con su botón Programar. Datos: `temporada` en `useProduccion.tsx`.
+  - Programado = lotes planificados desde hoy, en el ciclo en que quedan listos. Los "en curso" no se suman (su líquido ya está en el stock de tanques del ERP) ni los vencidos sin confirmar.
+  - Falta producir = por producto, "a producir" del motor con horizonte en el cierre de la temporada menos lo programado de ese producto. No es venta − stock − programado por línea (eso compensaba productos entre sí).
+  - Capacidad = fermentadores de la línea (sin bright tank ni laboratorio) × 30 ÷ (días de fermentación promedio + 2).
+- **Hoy**: las urgencias van primero; los lotes vencidos sin confirmar se agrupan en UNA fila plegable ("18 lotes del plan sin confirmar") en vez de 18 filas antes de la primera alarma.
+- **Banco con datos reales**: `/dev/produccion/real` (sólo desarrollo). Para eso `page.tsx` quedó como control de acceso y el armado de datos pasó a `vista.tsx` (los tipos se re-exportan desde `page.tsx`).
+
 ## Secciones de la UI anteriores al rediseño (histórico)
  (`ProduccionClient.tsx`)
 

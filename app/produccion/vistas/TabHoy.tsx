@@ -1,10 +1,11 @@
 'use client'
 
+import { useState } from 'react'
 import ProductImage from '@/components/ui/ProductImage'
-import { AlertTriangle, Beaker, CalendarDays, CalendarPlus, CheckCircle2, ChevronRight, ClipboardCheck, Gauge, Play, RotateCcw, ShoppingCart, ShieldAlert, TrendingUp, Info } from 'lucide-react'
+import { AlertTriangle, Beaker, CalendarDays, CalendarPlus, CheckCircle2, ChevronDown, ChevronRight, ClipboardCheck, Gauge, Play, RotateCcw, ShoppingCart, ShieldAlert, TrendingUp, Info } from 'lucide-react'
 import { FAMILIA_LABEL } from '@/lib/produccion/reglas'
 import { fNum, fPesosCorto, pl } from '../compartido'
-import { Seccion, Kpi, Franja, ChipEstado, BarraCobertura, ComoSeCalcula, fFecha, fDiaSemana } from './ui'
+import { Seccion, Kpi, Franja, ChipEstado, BarraCobertura, ComoSeCalcula, fFecha, fDiaSemana, textoDias } from './ui'
 import type { Produccion } from '../useProduccion'
 
 /**
@@ -36,6 +37,11 @@ export default function TabHoy({ p }: { p: Produccion }) {
     .sort((a, b) => (a.fechaLimiteInsumos ?? '').localeCompare(b.fechaLimiteInsumos ?? ''))
   const urgentes = coberturaProductos.filter(x => x.estado === 'urgente').slice(0, 6)
   const totalAcciones = seguimientoLotes.vencidos.length + seguimientoLotes.enCurso.length + urgentes.length + (pedirInsumos.length > 0 ? 1 : 0)
+  // Lotes cuya fecha pasó sin que nadie dijera si se cocinaron. Van juntos en
+  // una fila plegable DESPUÉS de las urgencias: el 17-nov-2026 eran 18 filas
+  // sueltas y la primera alarma real quedaba en la fila 19.
+  const [verVencidos, setVerVencidos] = useState(false)
+  const litrosVencidos = seguimientoLotes.vencidos.reduce((a, l) => a + l.litrosPlanificados, 0)
 
   const s = seguimientoLotes
   const litrosSemana = s.estaSemana.reduce((acc, l) => acc + l.litrosPlanificados, 0)
@@ -92,7 +98,7 @@ export default function TabHoy({ p }: { p: Produccion }) {
                 >
                   {totalAcciones === 0 && !hayDatos ? (
                     <p className="mx-5 mb-5 rounded-xl bg-(--p-chip) px-4 py-3 text-sm text-(--p-text-3)">
-                      No hay datos para decidir. Falta el stock del ERP y el forecast (el forecast se genera el día 2 de cada mes).
+                      No hay datos para decidir. Falta el stock del ERP y el forecast (el forecast se genera el día 24 de cada mes).
                     </p>
                   ) : totalAcciones === 0 ? (
                     <div className="mx-5 mb-5 flex items-center gap-2.5 rounded-xl bg-(--p-ok-soft) px-4 py-3 text-sm font-semibold text-(--p-ok)">
@@ -101,21 +107,6 @@ export default function TabHoy({ p }: { p: Produccion }) {
                     </div>
                   ) : (
                     <ul className="divide-y divide-(--p-line-2) border-t border-(--p-line-2)">
-                      {s.vencidos.map(l => (
-                        <li key={`v-${l.id}`} className="flex flex-wrap items-center gap-3 px-5 py-3">
-                          <span className="h-2 w-2 shrink-0 rounded-full bg-(--p-bad)" aria-hidden />
-                          <ProductImage nombre={l.producto} categoria={l.categoria} size={30} radius={7} />
-                          <div className="min-w-[180px] flex-1">
-                            <p className="text-sm font-bold text-(--p-text)">¿Se cocinó {l.producto}?</p>
-                            <p className="text-xs text-(--p-text-3)">{fNum(l.litrosPlanificados)} L estaban para el {fFecha(l.fechaPlanificada)} y el lote sigue como planificado.</p>
-                          </div>
-                          <div className="flex gap-1.5">
-                            <button type="button" disabled={guardandoPlan} onClick={() => cambiarEstadoLote(l.id, 'en_curso', { fechaInicioReal: l.fechaPlanificada })} className="prod-press flex items-center gap-1 rounded-lg bg-(--p-ok-soft) px-2.5 py-1.5 text-xs font-bold text-(--p-ok)"><Play size={13} />Sí</button>
-                            <button type="button" disabled={guardandoPlan} onClick={() => cambiarEstadoLote(l.id, 'planificado', { fechaPlanificada: hoy })} className="prod-press flex items-center gap-1 rounded-lg bg-(--p-chip) px-2.5 py-1.5 text-xs font-bold text-(--p-text-2)"><RotateCcw size={13} />Pasar a hoy</button>
-                          </div>
-                        </li>
-                      ))}
-
                       {urgentes.map(x => {
                         const peor = x.familias.reduce((a, b) => ((a.diasCobertura ?? 1e9) <= (b.diasCobertura ?? 1e9) ? a : b))
                         return (
@@ -145,6 +136,39 @@ export default function TabHoy({ p }: { p: Produccion }) {
                             </p>
                           </div>
                           <button type="button" onClick={() => setActiveTab('compras')} className="prod-press flex items-center gap-1 rounded-lg border border-(--p-line) px-3 py-1.5 text-xs font-bold text-(--p-text-2) hover:bg-(--p-hover)">Ver compras<ChevronRight size={14} /></button>
+                        </li>
+                      )}
+
+                      {s.vencidos.length > 0 && (
+                        <li>
+                          <button type="button" onClick={() => setVerVencidos(v => !v)} aria-expanded={verVencidos} className="flex w-full flex-wrap items-center gap-3 px-5 py-3 text-left hover:bg-(--p-hover)">
+                            <span className="h-2 w-2 shrink-0 rounded-full bg-(--p-warn)" aria-hidden />
+                            <span className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[7px] bg-(--p-warn-soft) text-(--p-warn)"><CalendarDays size={15} /></span>
+                            <span className="min-w-[180px] flex-1">
+                              <span className="block text-sm font-bold text-(--p-text)">{s.vencidos.length} {pl(s.vencidos.length, 'lote del plan sin confirmar', 'lotes del plan sin confirmar')}</span>
+                              <span className="block text-xs text-(--p-text-3)">{fNum(litrosVencidos)} L con fecha pasada que siguen como planificados. Confirma si se cocinaron o pásalos a hoy.</span>
+                            </span>
+                            <ChevronDown size={16} className={`shrink-0 text-(--p-text-3) transition-transform ${verVencidos ? 'rotate-180' : ''}`} />
+                          </button>
+                          <div className="prod-pliegue" data-abierto={String(verVencidos)} aria-hidden={!verVencidos} inert={!verVencidos}>
+                            <div>
+                              <ul className="divide-y divide-(--p-line-2) bg-(--p-card-2)">
+                                {s.vencidos.map(l => (
+                                  <li key={`v-${l.id}`} className="flex flex-wrap items-center gap-3 py-2.5 pl-12 pr-5">
+                                    <ProductImage nombre={l.producto} categoria={l.categoria} size={26} radius={6} />
+                                    <div className="min-w-[160px] flex-1">
+                                      <p className="text-[13px] font-bold text-(--p-text)">¿Se cocinó {l.producto}?</p>
+                                      <p className="text-xs text-(--p-text-3)">{fNum(l.litrosPlanificados)} L para el {fFecha(l.fechaPlanificada)}{l.fermentador ? ` · ${l.fermentador}` : ''}</p>
+                                    </div>
+                                    <div className="flex gap-1.5">
+                                      <button type="button" disabled={guardandoPlan} onClick={() => cambiarEstadoLote(l.id, 'en_curso', { fechaInicioReal: l.fechaPlanificada })} className="prod-press flex items-center gap-1 rounded-lg bg-(--p-ok-soft) px-2.5 py-1.5 text-xs font-bold text-(--p-ok)"><Play size={13} />Sí</button>
+                                      <button type="button" disabled={guardandoPlan} onClick={() => cambiarEstadoLote(l.id, 'planificado', { fechaPlanificada: hoy })} className="prod-press flex items-center gap-1 rounded-lg bg-(--p-chip) px-2.5 py-1.5 text-xs font-bold text-(--p-text-2)"><RotateCcw size={13} />Pasar a hoy</button>
+                                    </div>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          </div>
                         </li>
                       )}
 
@@ -221,11 +245,11 @@ export default function TabHoy({ p }: { p: Produccion }) {
               <Seccion
                 icono={Gauge}
                 titulo="Líneas fijas: cuánto alcanza el stock"
-                detalle="El catálogo estable no puede quebrar. Días hábiles que alcanza cada formato al ritmo esperado; la rayita marca el tiempo de cocción (si la barra no llega, ya no da el tiempo)."
+                detalle={`El catálogo estable no puede quebrar. Días hábiles que alcanza cada formato descontando la venta proyectada ciclo a ciclo${p.escenarioId === 'modelo' ? '' : ' (escenario elegido en Plan o Temporada)'}; la rayita marca el tiempo de cocción (si la barra no llega, ya no da el tiempo).`}
                 accion={<button type="button" onClick={() => setActiveTab('plan')} className="flex items-center gap-1 text-xs font-bold text-(--p-accent) hover:underline">Ver el plan completo<ChevronRight size={14} /></button>}
               >
                 {fijas.length === 0 ? (
-                  <p className="px-5 pb-5 text-sm text-(--p-text-3)">Todavía no hay colchón calculado: se genera junto con el forecast, el día 2 de cada mes.</p>
+                  <p className="px-5 pb-5 text-sm text-(--p-text-3)">Todavía no hay colchón calculado: se genera junto con el forecast, el día 24 de cada mes.</p>
                 ) : (
                   <div className="grid gap-3 px-5 pb-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                     {fijas.map(x => (
@@ -244,7 +268,7 @@ export default function TabHoy({ p }: { p: Produccion }) {
                           <span key={f.familia} className="flex flex-col gap-1">
                             <span className="flex items-baseline justify-between text-[11.5px]">
                               <span className="text-(--p-text-3)">{FAMILIA_LABEL[f.familia]}</span>
-                              <span className="font-bold tabular-nums text-(--p-text-2)">{f.diasCobertura != null ? `${fNum(f.diasCobertura)} días` : f.disponibleLitros == null ? 'sin stock cargado' : 'sin venta'}</span>
+                              <span className="font-bold tabular-nums text-(--p-text-2)">{f.diasCobertura != null ? textoDias(f.diasCobertura, f.duraMasQueElForecast) : f.disponibleLitros == null ? 'sin stock cargado' : 'sin venta'}</span>
                             </span>
                             <BarraCobertura dias={f.diasCobertura} leadDias={f.leadTimeSemanas * 5} estado={f.estado} />
                           </span>

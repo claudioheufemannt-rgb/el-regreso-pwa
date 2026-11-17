@@ -104,3 +104,10 @@ Unidad: producto × **familia** de envase (barril = barril 30 + barril 50; lata 
 El estado del producto es el peor de sus familias. Orden: urgente → reponer → sin dato → cubierto; dentro de cada estado, líneas fijas primero y luego menos días de cobertura. `aSugerencias()` traduce una fila al formato del modal "Programar cocción" (`ModalConfirmarLoteGrupo`).
 
 `demandaProyectadaEnPeriodo` (antes en el cliente) vive ahora en el motor; descarta un punto de forecast del ciclo en curso si existiera, para no contarlo dos veces con el ritmo real.
+
+### Cambios del 17-nov-2026 (auditoría de temporada alta)
+
+- **Quiebre ciclo a ciclo** (`diasHastaAgotar`): los días de cobertura ya no son disponible ÷ ritmo de 4 semanas. Se descuenta el stock día hábil a día hábil con la venta de SU ciclo (litros del ciclo ÷ días hábiles del ciclo). Motivo: en noviembre el ritmo de 4 semanas es el de un mes normal y todas las fechas de quiebre y "cocinar antes" quedaban optimistas justo antes de que la venta suba 40-50% (Descenso mostraba 198 días de barril). Si el stock dura más que el último ciclo con forecast, `duraMasQueElForecast = true`, no hay fecha de quiebre y la UI muestra "N+ días". El ritmo de 4 semanas se sigue mostrando como dato.
+- **Escenario de venta** (`factorDemanda`): multiplica el forecast de los ciclos que vienen; nunca la venta real del ciclo en curso. En la UI (selector "Venta" en Plan y Temporada, `SelectorEscenario.tsx`) se elige "Según el modelo" o "Año pasado ±X%"; ese % se traduce a un factor = venta de la temporada anterior × (1+X) ÷ forecast de los ciclos de la temporada que todavía no empiezan. Afecta Hoy, Plan y Temporada (no el Gantt ni Compras).
+- **Productos fuera de producción** (`PRODUCTOS_FUERA_DE_PRODUCCION` en `reglas.ts`: Helles Colab, Ámbar Lager, Barley Wine, Carrot Cake Stout): el motor los descarta. Antes eran 3 de las 7 urgencias.
+- `CoberturaFamilia.enProduccionLitros`: la parte del disponible que está en tanque; Plan la muestra aparte ("2.438 latas (863 L) + 1.810 L en tanque").

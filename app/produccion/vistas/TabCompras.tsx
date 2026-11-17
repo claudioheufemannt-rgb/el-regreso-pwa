@@ -49,7 +49,7 @@ export default function TabCompras({ p }: { p: Produccion }) {
                 detalle="Cuántos litros se van a vender (forecast) y cuánto hay que comprar para producirlos: insumos por receta y latas, etiquetas y tapas para lo que se vende en lata. Valorizado al último precio de compra."
               >
                 {planTrimestral.filas.length === 0 ? (
-                  <p className="px-5 pb-5 text-sm text-(--p-text-3)">Todavía no hay forecast para proyectar. Se genera el día 2 de cada mes.</p>
+                  <p className="px-5 pb-5 text-sm text-(--p-text-3)">Todavía no hay forecast para proyectar. Se genera el día 24 de cada mes.</p>
                 ) : (
                   <div className="grid gap-4 px-5 pb-5 xl:grid-cols-[1fr_minmax(320px,420px)]">
                     <div className="overflow-x-auto">

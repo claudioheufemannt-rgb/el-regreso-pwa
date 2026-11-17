@@ -15,6 +15,7 @@ const ModalCerrarLote = dynamic(() => import('./ModalCerrarLote'), { ssr: false 
 import { fNum, fMinutosDesde, ModalConfirmarLoteGrupo } from './compartido'
 import { useProduccion, type ProduccionProps } from './useProduccion'
 import TabHoy from './vistas/TabHoy'
+import TabTemporada from './vistas/TabTemporada'
 import TabDemanda from './vistas/TabDemanda'
 import TabPlan from './vistas/TabPlan'
 import TabPlanta from './vistas/TabPlanta'
@@ -63,7 +64,7 @@ export default function ProduccionClient(props: ProduccionProps) {
 
           <div className="flex shrink-0 items-center gap-2">
             {/* Qué tan frescos están los datos: inventario (cada sync del ERP)
-                y forecast (corre el día 2 de cada mes). */}
+                y forecast (corre el día 24 de cada mes). */}
             <div className="hidden items-center gap-3 rounded-xl border border-(--p-line) px-3 py-1.5 text-[12px] text-(--p-text-3) xl:flex">
               <span className="flex items-center gap-1.5" title="Última sincronización del inventario del ERP">
                 <span className={`h-1.5 w-1.5 rounded-full ${minutosDesdeSyncStock != null && minutosDesdeSyncStock < 180 ? 'bg-(--p-ok)' : 'bg-(--p-text-4)'}`} />
@@ -123,6 +124,7 @@ export default function ProduccionClient(props: ProduccionProps) {
       {/* ── Contenido ── */}
       <main ref={contenidoRef} data-autoscroll="y" className="flex-1 overflow-auto overscroll-contain bg-(--p-bg) px-4 pt-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] lg:px-8 lg:pt-7 lg:pb-7">
         {activeTab === 'hoy' && <TabHoy p={p} />}
+        {activeTab === 'temporada' && <TabTemporada p={p} />}
         {activeTab === 'demanda' && <TabDemanda p={p} />}
         {activeTab === 'plan' && <TabPlan p={p} />}
         {activeTab === 'planta' && <TabPlanta p={p} />}

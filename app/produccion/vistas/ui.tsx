@@ -23,6 +23,13 @@ export function fDiaSemana(iso: string): string {
   return `${['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'][d.getUTCDay()]} ${d.getUTCDate()}`
 }
 
+/** "23 días", "120+ días" cuando el stock dura más que el forecast (el número
+ *  es un mínimo), "—" sin dato. */
+export function textoDias(dias: number | null, duraMas = false): string {
+  if (dias == null) return '—'
+  return `${dias.toLocaleString('es-CL')}${duraMas ? '+' : ''} días`
+}
+
 /** Franja de cifras: agrupa varios <Kpi> en una sola superficie con divisores. */
 export function Franja({ children, columnas = 4 }: { children: ReactNode; columnas?: 2 | 3 | 4 }) {
   const cols = { 2: 'grid-cols-2', 3: 'grid-cols-2 lg:grid-cols-3', 4: 'grid-cols-2 lg:grid-cols-4' }[columnas]

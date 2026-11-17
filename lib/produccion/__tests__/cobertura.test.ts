@@ -93,6 +93,39 @@ describe('calcularCobertura', () => {
     expect(r[r.length - 1].producto).toBe('Mocho English')
   })
 
+  it('el quiebre consume la venta ciclo a ciclo: una subida de temporada adelanta la fecha', () => {
+    // Mismo ritmo hoy (ciclo en curso), pero diciembre triplica.
+    const plano = serie('Arboretum', 'barril_30', 40, { '2026-11-01': 110, '2026-12-01': 110, '2027-01-01': 110 })
+    const alta = serie('Arboretum', 'barril_30', 40, { '2026-11-01': 110, '2026-12-01': 330, '2027-01-01': 330 })
+    const c = [colchon('Arboretum', 'barril_30', 250, 10, 20)]
+    const dPlano = calcularCobertura([plano], c, avance, { hoyISO: HOY, hastaISO: '2026-12-23' })[0].familias[0]
+    const dAlta = calcularCobertura([alta], c, avance, { hoyISO: HOY, hastaISO: '2026-12-23' })[0].familias[0]
+    expect(dAlta.diasCobertura!).toBeLessThan(dPlano.diasCobertura!)
+    expect(dAlta.ritmoDiario).toBe(dPlano.ritmoDiario) // el ritmo de hoy es el mismo
+  })
+
+  it('si el stock dura más que el forecast no inventa una fecha de quiebre', () => {
+    const r2 = calcularCobertura([serie('Fisura', 'barril_30', 1, { '2026-11-01': 5 })], [colchon('Fisura', 'barril_30', 5000, 10, 20)], avance, { hoyISO: HOY, hastaISO: '2026-11-23' })
+    const f = r2[0].familias[0]
+    expect(f.duraMasQueElForecast).toBe(true)
+    expect(f.fechaQuiebre).toBeNull()
+    expect(f.estado).toBe('ok')
+  })
+
+  it('el escenario multiplica la demanda futura, no la del ciclo en curso', () => {
+    const s = serie('Fisura', 'barril_30', 80, { '2026-11-01': 310 })
+    expect(demandaProyectadaEnPeriodo(s, avance, '2026-09-24', '2026-10-23', 1.2)).toBeCloseTo(220, 6)
+    expect(demandaProyectadaEnPeriodo(s, avance, '2026-10-24', '2026-11-23', 1.2)).toBeCloseTo(372, 6)
+    const base = calcularCobertura(series, colchones, avance, { hoyISO: HOY, hastaISO: '2026-12-23' }).find(p => p.producto === 'Fisura')!
+    const mas = calcularCobertura(series, colchones, avance, { hoyISO: HOY, hastaISO: '2026-12-23', factorDemanda: 1.2 }).find(p => p.producto === 'Fisura')!
+    expect(mas.aProducirLitros).toBeGreaterThan(base.aProducirLitros)
+  })
+
+  it('los productos fuera de producción no generan alarmas', () => {
+    const r2 = calcularCobertura([serie('Helles Colab', 'barril_30', 50, { '2026-11-01': 200 })], [colchon('Helles Colab', 'barril_30', 0, 100, 200)], avance, { hoyISO: HOY, hastaISO: '2026-12-23' })
+    expect(r2).toHaveLength(0)
+  })
+
   it('las sugerencias para el modal traen una fila por familia con necesidad', () => {
     const sug = aSugerencias(fisura, HOY)
     expect(sug.length).toBeGreaterThan(0)

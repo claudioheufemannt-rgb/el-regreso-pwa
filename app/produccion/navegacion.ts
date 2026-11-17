@@ -1,4 +1,4 @@
-import { Sun, TrendingUp, ClipboardList, Factory, ShoppingCart, Beer } from 'lucide-react'
+import { Sun, CalendarRange, TrendingUp, ClipboardList, Factory, ShoppingCart, Beer } from 'lucide-react'
 
 /**
  * Las cinco pestañas del módulo Producción (rediseño 4-oct-2026). Antes eran
@@ -7,6 +7,7 @@ import { Sun, TrendingUp, ClipboardList, Factory, ShoppingCart, Beer } from 'luc
  * que se trabaja:
  *
  *   Hoy      → ¿estamos bien? ¿qué hay que hacer esta semana?
+ *   Temporada→ temporada alta (dic-mar): venta esperada, programado, falta y quiebres (17-nov-2026)
  *   Demanda  → ¿cuánto vamos a vender?
  *   Plan     → ¿cuánto y cuándo producir? (motor único de cobertura)
  *   Planta   → ¿qué hay en cada tanque y qué se cocina? (Gantt + cola + lotes)
@@ -17,6 +18,7 @@ import { Sun, TrendingUp, ClipboardList, Factory, ShoppingCart, Beer } from 'luc
  */
 export const navItems = [
   { id: 'hoy', icon: Sun, label: 'Hoy', pregunta: '¿Cómo estamos y qué hay que hacer esta semana?' },
+  { id: 'temporada', icon: CalendarRange, label: 'Temporada', pregunta: '¿Cuánto vamos a vender en temporada alta y cuánto hay que producir?' },
   { id: 'demanda', icon: TrendingUp, label: 'Demanda', pregunta: '¿Cuánto vamos a vender?' },
   { id: 'plan', icon: ClipboardList, label: 'Plan', pregunta: '¿Cuánto y cuándo hay que producir?' },
   { id: 'planta', icon: Factory, label: 'Planta', pregunta: '¿Qué hay en cada tanque y qué se cocina?' },

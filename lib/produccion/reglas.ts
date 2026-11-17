@@ -380,3 +380,21 @@ export const LINEAS_FIJAS = new Set<string>([
 export function esLineaFija(producto: string): boolean {
   return LINEAS_FIJAS.has(producto)
 }
+
+/**
+ * Productos que hoy NO se producen. El forecast los sigue proyectando por su
+ * historia, y sin esta lista disparaban alarmas "urgente · atrasado" y entraban
+ * a lo que hay que producir (auditoría 17-nov-2026: 3 de las 7 urgencias eran
+ * de esta lista). El motor de cobertura los deja fuera; el forecast de la
+ * pestaña Demanda los sigue mostrando.
+ *
+ * Helles Colab: colaboración puntual, descontinuada. Ámbar Lager, Barley Wine
+ * y Carrot Cake Stout: sin producción desde oct-2026 (definido por el usuario
+ * el 7-oct-2026). Si alguno vuelve a producirse, sacarlo de acá.
+ */
+export const PRODUCTOS_FUERA_DE_PRODUCCION = new Set<string>([
+  'Helles Colab', 'Ámbar Lager', 'Barley Wine', 'Carrot Cake Stout',
+])
+export function estaFueraDeProduccion(producto: string): boolean {
+  return PRODUCTOS_FUERA_DE_PRODUCCION.has(producto)
+}

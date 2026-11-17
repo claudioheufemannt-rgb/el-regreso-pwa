@@ -5,7 +5,7 @@ import { useArrastreCalendario, type CargaArrastre, type DestinoArrastre } from 
 import type { LoteCerrado, EnvaseItem, PuntoHistorialStock, MlLataPorProducto, SerieForecast, CalidadItem, StockItem, AvanceMes, StockSeguridadItem, LotePlan, ConfigProductoProduccion, SugerenciaPlan, SplitFermentador, OcupacionPlanta, NecesidadInsumo, StockInsumoItem, RecetaInsumoLinea, LoteSinReceta, AjusteTanque } from './page'
 import { type TabId } from './navegacion'
 import type { BloqueGantt, ConfigProducto } from './GanttProduccion'
-import { LINEAS_FIJAS, finDeCiclo, esDiaHabilISO, LEAD_TIME_INSUMOS_SEMANAS, esLineaFija, familiaEnvase, type EnvaseBucket, type FamiliaEnvase } from '@/lib/produccion/reglas'
+import { LINEAS_FIJAS, finDeCiclo, ciclosDe, esDiaHabilISO, LEAD_TIME_INSUMOS_SEMANAS, esLineaFija, familiaEnvase, type EnvaseBucket, type FamiliaEnvase } from '@/lib/produccion/reglas'
 
 import { calcularCobertura, aSugerencias, type CoberturaProducto } from '@/lib/produccion/cobertura'
 import { suscribirProyeccionAbierta, leerProyeccionAbierta, MESES_CORTOS, fNum, fPesosCorto, ORDEN_ENVASE, ORDEN_FAMILIA, UNIDAD_ENVASE, hoyLocalISO, sumarDiasCalISO, restarDiasHabilesISO, diffDiasISO, demandaProyectadaEnPeriodo, etiquetaMes, indiceMes } from './compartido'
@@ -58,6 +58,17 @@ export interface ProduccionProps {
   mlLataPorProducto: MlLataPorProducto
   esAdmin: boolean
 }
+
+/** Escenarios de venta para planificar. `crecimiento` es contra la temporada
+ *  anterior (dic-mar); null = el forecast tal cual. */
+export const ESCENARIOS = [
+  { id: 'modelo', label: 'Modelo', crecimiento: null },
+  { id: 'igual', label: 'Igual al año pasado', crecimiento: 0 },
+  { id: '+10', label: '+10%', crecimiento: 0.1 },
+  { id: '+20', label: '+20%', crecimiento: 0.2 },
+  { id: '+30', label: '+30%', crecimiento: 0.3 },
+] as const
+export type EscenarioId = (typeof ESCENARIOS)[number]['id']
 
 /** Estado y cálculos del módulo Producción. Las vistas reciben el objeto entero
  *  (`p`) y toman lo que necesitan; así ninguna repite un cálculo. */
@@ -2398,10 +2409,38 @@ export function useProduccion(props: ProduccionProps) {
   }, [avanceMes.mes, mesesSeguridad])
   const hastaPlanActivo = hastaPlan || opcionesHorizontePlan[Math.min(2, opcionesHorizontePlan.length - 1)]?.fecha || finDeCiclo(avanceMes.mes)
 
-  const coberturaProductos = useMemo<CoberturaProducto[]>(() => {
+  /** Escenario de venta (17-nov-2026): con qué venta se planifica en Hoy, Plan
+   *  y Temporada. "Modelo" es el forecast tal cual; los demás fijan la venta de
+   *  la temporada (dic-mar) en la del año anterior más un %, y eso se traduce
+   *  a un factor sobre el forecast de los ciclos que vienen. Existe porque el
+   *  forecast se quedó corto cuando la venta creció más rápido que su historia
+   *  (oct-nov 2026 iban +22-25% sobre 2025 y el modelo proyectaba la temporada
+   *  por DEBAJO de la anterior). */
+  const [escenarioId, setEscenarioId] = useState<EscenarioId>('modelo')
+  const mesesTemporada = useMemo(() => {
+    const [anio, mesNum] = avanceMes.mes.split('-').map(Number)
+    const y = mesNum >= 4 ? anio : anio - 1
+    return [`${y}-12-01`, `${y + 1}-01-01`, `${y + 1}-02-01`, `${y + 1}-03-01`]
+  }, [avanceMes.mes])
+  const escenarios = useMemo(() => {
+    // Sólo los ciclos de la temporada que todavía no empiezan: los demás ya
+    // son venta real y el escenario no los toca.
+    const futuros = mesesTemporada.filter(m => m > avanceMes.mes)
+    const prod = series.filter(x => x.nivel === 'producto' && x.producto)
+    const suma = (mes: string, tipo: 'historico' | 'forecast') => prod.reduce((a, s) => a + (s.puntos.find(pt => pt.mes === mes && pt.tipo === tipo)?.litros ?? 0), 0)
+    const anterior = futuros.reduce((a, m) => a + suma(`${Number(m.slice(0, 4)) - 1}${m.slice(4)}`, 'historico'), 0)
+    const modelo = futuros.reduce((a, m) => a + suma(m, 'forecast'), 0)
+    const factorPara = (crecimiento: number) => (modelo > 0 && anterior > 0 ? (anterior * (1 + crecimiento)) / modelo : 1)
+    return ESCENARIOS.map(e => ({ ...e, factor: e.crecimiento == null ? 1 : factorPara(e.crecimiento) }))
+  }, [mesesTemporada, avanceMes.mes, series])
+  const escenario = escenarios.find(e => e.id === escenarioId)?.factor ?? 1
+
+  /** Colchón y stock por producto × envase del primer ciclo proyectado: la
+   *  entrada del motor de cobertura (Plan/Hoy y Temporada). */
+  const colchonesCobertura = useMemo(() => {
     const primerMes = mesesSeguridad[0]
     if (!primerMes) return []
-    const colchones = stockSeguridad
+    return stockSeguridad
       .filter(x => x.nivel === 'producto_envase' && x.mes === primerMes && x.envase)
       .map(x => ({
         producto: x.producto, envase: x.envase, categoria: x.categoria,
@@ -2409,8 +2448,13 @@ export function useProduccion(props: ProduccionProps) {
         litrosEnProduccion: x.litrosEnProduccion, stockSeguridadLitros: x.stockSeguridadLitros,
         puntoReordenLitros: x.puntoReordenLitros, leadTimeSemanas: x.leadTimeSemanas,
       }))
-    return calcularCobertura(series.filter(x => x.nivel === 'producto_envase'), colchones, avanceMes, { hoyISO: hoyLocalISO(), hastaISO: hastaPlanActivo })
-  }, [series, stockSeguridad, mesesSeguridad, avanceMes, hastaPlanActivo])
+  }, [stockSeguridad, mesesSeguridad])
+  const seriesProductoEnvase = useMemo(() => series.filter(x => x.nivel === 'producto_envase'), [series])
+
+  const coberturaProductos = useMemo<CoberturaProducto[]>(() => {
+    if (colchonesCobertura.length === 0) return []
+    return calcularCobertura(seriesProductoEnvase, colchonesCobertura, avanceMes, { hoyISO: hoyLocalISO(), hastaISO: hastaPlanActivo, factorDemanda: escenario })
+  }, [seriesProductoEnvase, colchonesCobertura, avanceMes, hastaPlanActivo, escenario])
 
   const conteoCobertura = useMemo(() => {
     const c = { urgente: 0, reponer: 0, ok: 0, sin_dato: 0, urgenteFija: 0, reponerFija: 0 }
@@ -2421,6 +2465,107 @@ export function useProduccion(props: ProduccionProps) {
     }
     return c
   }, [coberturaProductos])
+
+  /* ── Temporada alta (17-nov-2026) ──
+     Una sola vista para decidir cuánto producir de dic a mar: venta esperada
+     por ciclo (año anterior, el modelo y el escenario elegido), lo que ya está
+     programado, la capacidad de los tanques y los primeros quiebres. */
+  const temporada = useMemo(() => {
+    const hoy = hoyLocalISO()
+    const meses = mesesTemporada
+    const unAnioAntes = (mes: string) => `${Number(mes.slice(0, 4)) - 1}${mes.slice(4)}`
+    const cats = ['cerveza', 'kombucha'] as const
+    const porProducto = series.filter(x => x.nivel === 'producto' && x.producto && (x.categoria === 'cerveza' || x.categoria === 'kombucha'))
+    const valor = (s: SerieForecast, mes: string, tipo: 'historico' | 'forecast') => s.puntos.find(pt => pt.mes === mes && pt.tipo === tipo)?.litros ?? 0
+
+    // Venta esperada de un ciclo: real si ya cerró, proyección del ritmo real
+    // si está en curso, forecast × escenario si viene.
+    const esperada = (s: SerieForecast, mes: string, factor: number) => {
+      if (mes < avanceMes.mes) return valor(s, mes, 'historico')
+      if (mes === avanceMes.mes) return avanceMes.diasHabilesTranscurridos > 0 ? s.litrosMesEnCurso / avanceMes.diasHabilesTranscurridos * avanceMes.diasHabilesEnCiclo : 0
+      return valor(s, mes, 'forecast') * factor
+    }
+
+    // Capacidad: litros que pueden salir por ciclo si ningún tanque queda vacío.
+    // Fermentadores de la línea (sin bright tank ni los de laboratorio de 150 L)
+    // × 30 días ÷ (días de fermentación + 2 de limpieza y llenado).
+    const diasPromedio = (cat: 'cerveza' | 'kombucha') => {
+      const d = configGantt.filter(c => c.categoria === cat).map(c => c.diasFermentacion)
+      return d.length ? d.reduce((a, b) => a + b, 0) / d.length : cat === 'kombucha' ? 12 : 24
+    }
+    const tanquesLinea = (cat: 'cerveza' | 'kombucha') => ocupacionPlanta.tanques
+      .filter(t => t.categoria === cat && !/bright|lavoratorio|laboratorio/i.test(`${t.tanque} ${t.tipo}`))
+    const capacidad = Object.fromEntries(cats.map(cat => {
+      const litros = tanquesLinea(cat).reduce((a, t) => a + t.capacidadLitros, 0)
+      return [cat, { tanques: tanquesLinea(cat).length, litros, porCiclo: Math.round(litros * 30 / (diasPromedio(cat) + 2)), diasFermentacion: Math.round(diasPromedio(cat)) }]
+    })) as Record<'cerveza' | 'kombucha', { tanques: number; litros: number; porCiclo: number; diasFermentacion: number }>
+
+    // Lo programado: cada lote planificado desde hoy suma en el ciclo en que
+    // queda listo (fecha de cocción + días de fermentación). Los "en curso" no
+    // cuentan: su líquido ya está en los tanques del informe de stock del ERP,
+    // que entra al disponible. Los vencidos tampoco: nadie dijo si se cocinaron.
+    const programadoPorCiclo = new Map<string, Record<'cerveza' | 'kombucha', number>>()
+    const programadoPorProducto = new Map<string, number>()
+    const finUltimo = finDeCiclo(meses[meses.length - 1])
+    for (const l of plan) {
+      if (l.estado !== 'planificado' || l.fechaPlanificada < hoy) continue
+      const dias = l.diasOcupacion ?? configGantt.find(c => c.producto === l.producto)?.diasFermentacion ?? diasPromedio(l.categoria)
+      const listo = sumarDiasCalISO(l.fechaPlanificada, dias)
+      const ciclo = ciclosDe(listo)[0]
+      const acc = programadoPorCiclo.get(ciclo) ?? { cerveza: 0, kombucha: 0 }
+      acc[l.categoria] += l.litrosPlanificados
+      programadoPorCiclo.set(ciclo, acc)
+      if (listo <= finUltimo) programadoPorProducto.set(l.producto, (programadoPorProducto.get(l.producto) ?? 0) + l.litrosPlanificados)
+    }
+
+    const filas = meses.map(mes => {
+      const porCat = Object.fromEntries(cats.map(cat => {
+        const ss = porProducto.filter(s => s.categoria === cat)
+        return [cat, {
+          anterior: Math.round(ss.reduce((a, s) => a + valor(s, unAnioAntes(mes), 'historico'), 0)),
+          modelo: Math.round(ss.reduce((a, s) => a + esperada(s, mes, 1), 0)),
+          escenario: Math.round(ss.reduce((a, s) => a + esperada(s, mes, escenario), 0)),
+          programado: Math.round(programadoPorCiclo.get(mes)?.[cat] ?? 0),
+        }]
+      })) as Record<'cerveza' | 'kombucha', { anterior: number; modelo: number; escenario: number; programado: number }>
+      const suma = (k: 'anterior' | 'modelo' | 'escenario' | 'programado') => porCat.cerveza[k] + porCat.kombucha[k]
+      return { mes, cerrado: mes < avanceMes.mes, porCat, anterior: suma('anterior'), modelo: suma('modelo'), escenario: suma('escenario'), programado: suma('programado') }
+    })
+    const total = (k: 'anterior' | 'modelo' | 'escenario' | 'programado') => filas.reduce((a, f) => a + f[k], 0)
+
+    // El motor con el horizonte en el cierre de la temporada (independiente del
+    // "Cubrir hasta" de Plan): por producto × formato, cuánto hay y cuánto falta
+    // para llegar al 23 de marzo con el colchón intacto.
+    const finTemporada = finUltimo
+    const cobertura = colchonesCobertura.length > 0
+      ? calcularCobertura(seriesProductoEnvase, colchonesCobertura, avanceMes, { hoyISO: hoy, hastaISO: finTemporada, factorDemanda: escenario })
+      : []
+
+    // Balance por línea. "Falta producir" se cuenta producto por producto (lo
+    // que sobra de Mocho no cubre lo que falta de Berry Menta) y descuenta lo
+    // ya programado de ese mismo producto.
+    const balance = Object.fromEntries(cats.map(cat => {
+      const prods = cobertura.filter(p => p.categoria === cat)
+      const stock = prods.reduce((a, p) => a + p.familias.reduce((b, f) => b + (f.disponibleLitros ?? 0), 0), 0)
+      const venta = prods.reduce((a, p) => a + p.familias.reduce((b, f) => b + f.demandaHorizonte, 0), 0)
+      const programado = [...programadoPorProducto.entries()]
+        .filter(([prod]) => plan.find(l => l.producto === prod)?.categoria === cat)
+        .reduce((a, [, v]) => a + v, 0)
+      const faltante = prods.reduce((a, p) => a + Math.max(0, p.aProducirLitros - (programadoPorProducto.get(p.producto) ?? 0)), 0)
+      return [cat, { stock: Math.round(stock), programado: Math.round(programado), venta: Math.round(venta), faltante: Math.round(faltante) }]
+    })) as Record<'cerveza' | 'kombucha', { stock: number; programado: number; venta: number; faltante: number }>
+
+    // Quiebres que caen antes del cierre de la temporada, el primero arriba.
+    const quiebres = cobertura.flatMap(p => p.familias
+      .filter(f => f.fechaQuiebre != null && f.fechaQuiebre <= finTemporada)
+      .map(f => ({ producto: p.producto, categoria: p.categoria, lineaFija: p.lineaFija, familia: f.familia, fechaQuiebre: f.fechaQuiebre as string, fechaLimiteCocer: f.fechaLimiteCocer, aProducirLitros: f.aProducirLitros, estado: f.estado, cobertura: p })))
+      .sort((a, b) => a.fechaQuiebre.localeCompare(b.fechaQuiebre) || Number(b.lineaFija) - Number(a.lineaFija))
+
+    return {
+      meses, filas, capacidad, balance, quiebres, finTemporada,
+      totales: { anterior: total('anterior'), modelo: total('modelo'), escenario: total('escenario'), programado: total('programado') },
+    }
+  }, [series, avanceMes, mesesTemporada, escenario, configGantt, ocupacionPlanta.tanques, plan, colchonesCobertura, seriesProductoEnvase])
 
   /** Abre el modal de "Programar cocción" con la necesidad del motor. */
   const programarDesdeCobertura = useCallback((p: CoberturaProducto) => {
@@ -2568,7 +2713,7 @@ export function useProduccion(props: ProduccionProps) {
     return { filas, total: filas.reduce((s, f) => s + f.total, 0) }
   }, [series, presupuestoInsumos, necesidadEnvase])
 
-  return { quitarLoteConDeshacer, deshacer, deshacerQuitar, cerrarDeshacer, series, calidad, splitFermentadores, ocupacionPlanta, stockInsumos, recetaInsumos, lotesSinReceta, stock, stockSeguridad, ultimaCorrida, minutosDesdeSyncStock, avanceMes, activeTab, setActiveTab, plan, guardandoPlan, errorPlan, setErrorPlan, mostrarFormLote, setMostrarFormLote, sugerenciaModal, setSugerenciaModal, moverLote, cambiarEstadoLote, guardarAjusteTanque, restablecerAjusteTanque, agregarLote, busquedaInsumo, panelInsumosAbierto, setPanelInsumosAbierto, mrpHorizonteDias, setMrpHorizonteDias, filtroCategoria, setFiltroCategoria, filtroEnvase, setFiltroEnvase, verModelo, setVerModelo, serieGeneral, filtroCategoriaForecast, filtroEnvaseForecast, setFiltroEnvaseForecast, filtroProductoForecast, setFiltroProductoForecast, productosForecastDisponibles, envasesForecastDisponibles, serieActual, cambiarCategoriaForecast, mtdLitros, ritmoProyectado, monedaForecast, setMonedaForecast, precioNeto, verNeto, kMoneda, fUnidad, valorSerie, unidadEnvaseSerieActual, chartData, hayDescomposicion, descomposicionProximo, curvaEstacional, ecuacionModelo, tramosTemporadaAlta, precisionSerie, envasesDisponibles, filasTablaDetalle, horizontePlanMeses, setHorizontePlanMeses, horizontePlanMax, anclasCoccion, detalleCoccion, cancelarCierrePreview, programarCierrePreview, fijarDetalle, cerrarDetalle, anclarCoccion, anclasTanque, anclarTanque, limpiarAnclas, configGantt, setConfigGantt, configAbierta, setConfigAbierta, proyeccionCargaAbierta, agregarProductoAbierto, setAgregarProductoAbierto, ajustesTanque, editarTanqueAbierto, setEditarTanqueAbierto, guardandoAjusteTanque, errorAjusteTanque, setErrorAjusteTanque, bloqueRecienMovido, arrastreStore, fantasmaRef, propsOrigenGantt, quitarBloqueGantt, planSugerido, resumenCargaMeses, confirmarNecesidad, bloquesGantt, coberturaGantt, necesidadGantt, ultimoMesForecast, fermentadoresGantt, calendarioCobertura, LEAD_COMPRA_DIAS_HABILES, setTogglesPresupuesto, setPresupuestoDesde, setPresupuestoHasta, vistaPresupuesto, setVistaPresupuesto, descargando, mesesPlan, ventanaDesde, ventanaHasta, lotesEnVentana, estaSeleccionado, alternarLote, presupuesto, descargarPresupuesto, inventarioAgrupado, alertasPorTab, stockInsumosVacio, stockInsumosFiltrado, mrpInsumos, PRESUPUESTO_MESES, presupuestoInsumos, mrpFiltrado, lotesCerrados, setHastaPlan, opcionesHorizontePlan, hastaPlanActivo, coberturaProductos, conteoCobertura, programarDesdeCobertura, cierreLote, setCierreLote, seguimientoLotes, quiebresLineasFijas, envase, guardarEnvase, errorEnvase, setErrorEnvase, necesidadEnvase, planTrimestral }
+  return { quitarLoteConDeshacer, deshacer, deshacerQuitar, cerrarDeshacer, series, calidad, splitFermentadores, ocupacionPlanta, stockInsumos, recetaInsumos, lotesSinReceta, stock, stockSeguridad, ultimaCorrida, minutosDesdeSyncStock, avanceMes, activeTab, setActiveTab, plan, guardandoPlan, errorPlan, setErrorPlan, mostrarFormLote, setMostrarFormLote, sugerenciaModal, setSugerenciaModal, moverLote, cambiarEstadoLote, guardarAjusteTanque, restablecerAjusteTanque, agregarLote, busquedaInsumo, panelInsumosAbierto, setPanelInsumosAbierto, mrpHorizonteDias, setMrpHorizonteDias, filtroCategoria, setFiltroCategoria, filtroEnvase, setFiltroEnvase, verModelo, setVerModelo, serieGeneral, filtroCategoriaForecast, filtroEnvaseForecast, setFiltroEnvaseForecast, filtroProductoForecast, setFiltroProductoForecast, productosForecastDisponibles, envasesForecastDisponibles, serieActual, cambiarCategoriaForecast, mtdLitros, ritmoProyectado, monedaForecast, setMonedaForecast, precioNeto, verNeto, kMoneda, fUnidad, valorSerie, unidadEnvaseSerieActual, chartData, hayDescomposicion, descomposicionProximo, curvaEstacional, ecuacionModelo, tramosTemporadaAlta, precisionSerie, envasesDisponibles, filasTablaDetalle, horizontePlanMeses, setHorizontePlanMeses, horizontePlanMax, anclasCoccion, detalleCoccion, cancelarCierrePreview, programarCierrePreview, fijarDetalle, cerrarDetalle, anclarCoccion, anclasTanque, anclarTanque, limpiarAnclas, configGantt, setConfigGantt, configAbierta, setConfigAbierta, proyeccionCargaAbierta, agregarProductoAbierto, setAgregarProductoAbierto, ajustesTanque, editarTanqueAbierto, setEditarTanqueAbierto, guardandoAjusteTanque, errorAjusteTanque, setErrorAjusteTanque, bloqueRecienMovido, arrastreStore, fantasmaRef, propsOrigenGantt, quitarBloqueGantt, planSugerido, resumenCargaMeses, confirmarNecesidad, bloquesGantt, coberturaGantt, necesidadGantt, ultimoMesForecast, fermentadoresGantt, calendarioCobertura, LEAD_COMPRA_DIAS_HABILES, setTogglesPresupuesto, setPresupuestoDesde, setPresupuestoHasta, vistaPresupuesto, setVistaPresupuesto, descargando, mesesPlan, ventanaDesde, ventanaHasta, lotesEnVentana, estaSeleccionado, alternarLote, presupuesto, descargarPresupuesto, inventarioAgrupado, alertasPorTab, stockInsumosVacio, stockInsumosFiltrado, mrpInsumos, PRESUPUESTO_MESES, presupuestoInsumos, mrpFiltrado, lotesCerrados, setHastaPlan, opcionesHorizontePlan, hastaPlanActivo, escenario, escenarios, escenarioId, setEscenarioId, temporada, coberturaProductos, conteoCobertura, programarDesdeCobertura, cierreLote, setCierreLote, seguimientoLotes, quiebresLineasFijas, envase, guardarEnvase, errorEnvase, setErrorEnvase, necesidadEnvase, planTrimestral }
 }
 
 export type Produccion = ReturnType<typeof useProduccion>

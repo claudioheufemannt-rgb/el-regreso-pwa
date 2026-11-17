@@ -7,7 +7,8 @@ import { ClipboardList, ChevronDown, TrendingUp, Warehouse, CalendarPlus } from 
 import { ENVASE_LABEL, FAMILIA_LABEL, LEAD_TIME_INSUMOS_SEMANAS } from '@/lib/produccion/reglas'
 import type { CoberturaFamilia, EstadoCobertura } from '@/lib/produccion/cobertura'
 import { fNum, nombreCamaraCorto, pl } from '../compartido'
-import { Seccion, ChipEstado, BarraCobertura, Pastillas, ComoSeCalcula, fFecha } from './ui'
+import { Seccion, ChipEstado, BarraCobertura, Pastillas, ComoSeCalcula, fFecha, textoDias } from './ui'
+import SelectorEscenario from './SelectorEscenario'
 import type { Produccion } from '../useProduccion'
 
 const NecesidadMensual = dynamic(() => import('../NecesidadMensual'), {
@@ -15,11 +16,14 @@ const NecesidadMensual = dynamic(() => import('../NecesidadMensual'), {
   ssr: false,
 })
 
-/** "312 L · 10 barriles" / "1.240 latas · 520 L" */
+/** "312 L · 10 barriles" / "1.240 latas (520 L)", más lo que sigue en tanque
+ *  aparte: antes "1.426 latas · 2.315 L" sumaba latas con litros sin envasar. */
 function textoDisponible(f: CoberturaFamilia): string {
   if (f.disponibleLitros == null) return 'Sin stock cargado'
-  if (f.familia === 'barril') return `${fNum(f.disponibleLitros)} L · ${fNum(f.disponibleLitros / 30)} barr.`
-  return f.disponibleUnidades != null ? `${fNum(f.disponibleUnidades)} latas · ${fNum(f.disponibleLitros)} L` : `${fNum(f.disponibleLitros)} L`
+  const enCamara = f.disponibleLitros - f.enProduccionLitros
+  const tanque = f.enProduccionLitros > 0 ? ` + ${fNum(f.enProduccionLitros)} L en tanque` : ''
+  if (f.familia === 'barril') return `${fNum(enCamara / 30)} barr. (${fNum(enCamara)} L)${tanque}`
+  return f.disponibleUnidades != null ? `${fNum(f.disponibleUnidades)} latas (${fNum(enCamara)} L)${tanque}` : `${fNum(enCamara)} L${tanque}`
 }
 
 /**
@@ -49,6 +53,8 @@ export default function TabPlan({ p }: { p: Produccion }) {
                 titulo="Cobertura y producción por producto"
                 detalle={<>Cuánto alcanza el stock de cada producto, cuánto hay que producir para llegar cubierto al <strong className="text-(--p-text-2)">{fFecha(hastaPlanActivo)}</strong> y hasta cuándo se puede esperar para cocinar. Barril y lata van por separado: un pedido de lata no se cubre con barril.</>}
                 accion={
+                  <>
+                  <SelectorEscenario p={p} />
                   <label className="flex items-center gap-2 text-xs font-semibold text-(--p-text-3)">
                     Cubrir hasta
                     <select
@@ -60,6 +66,7 @@ export default function TabPlan({ p }: { p: Produccion }) {
                       {opcionesHorizontePlan.map(o => <option key={o.fecha} value={o.fecha}>{o.label} · {fFecha(o.fecha)}</option>)}
                     </select>
                   </label>
+                  </>
                 }
               >
                 {/* Filtros */}
@@ -101,7 +108,7 @@ export default function TabPlan({ p }: { p: Produccion }) {
                 {filas.length === 0 ? (
                   <p className="px-5 py-8 text-center text-sm text-(--p-text-3)">
                     {coberturaProductos.length === 0
-                      ? 'Todavía no hay colchón calculado: se genera junto con el forecast, el día 2 de cada mes.'
+                      ? 'Todavía no hay colchón calculado: se genera junto con el forecast, el día 24 de cada mes.'
                       : 'Ningún producto con esos filtros.'}
                   </p>
                 ) : (
@@ -133,7 +140,7 @@ export default function TabPlan({ p }: { p: Produccion }) {
                             {/* Alcanza */}
                             <div className="col-span-2 xl:col-span-1">
                               <div className="flex items-baseline justify-between gap-2 text-sm">
-                                <span className="font-bold tabular-nums text-(--p-text)">{x.diasCobertura != null ? `${fNum(x.diasCobertura)} días` : '—'}</span>
+                                <span className="font-bold tabular-nums text-(--p-text)">{textoDias(x.diasCobertura, peor.duraMasQueElForecast)}</span>
                                 <span className="text-[11px] text-(--p-text-3)">{FAMILIA_LABEL[peor.familia]}</span>
                               </div>
                               <BarraCobertura dias={x.diasCobertura} leadDias={lead} estado={x.estado} />
@@ -212,7 +219,7 @@ export default function TabPlan({ p }: { p: Produccion }) {
                                         <td className="px-3 py-2 text-right">{fNum(f.stockSeguridadLitros)} L</td>
                                         <td className="px-3 py-2 text-right">{fNum(f.puntoReordenLitros)} L</td>
                                         <td className="px-3 py-2 text-right">{f.ritmoDiario.toLocaleString('es-CL')} L</td>
-                                        <td className="px-3 py-2 text-right">{f.diasCobertura != null ? `${fNum(f.diasCobertura)} días` : '—'}</td>
+                                        <td className="px-3 py-2 text-right">{textoDias(f.diasCobertura, f.duraMasQueElForecast)}</td>
                                         <td className="px-3 py-2 text-right">{fNum(f.demandaHorizonte)} L</td>
                                         <td className="py-2 pl-3 text-right font-bold text-(--p-text)">{fNum(f.aProducirLitros)} L</td>
                                       </tr>

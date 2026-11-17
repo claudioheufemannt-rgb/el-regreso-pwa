@@ -280,7 +280,7 @@ export default function TabDemanda({ p }: { p: Produccion }) {
                 <div className="relative h-[360px] w-full">
                   {chartData.length === 0 ? (
                     <div className="flex h-full items-center justify-center text-sm text-(--p-text-3)">
-                      Todavía no hay una corrida del modelo. Se genera automáticamente el día 2 de cada mes.
+                      Todavía no hay una corrida del modelo. Se genera automáticamente el día 24 de cada mes.
                     </div>
                   ) : (
                     <ResponsiveContainer width="100%" height="100%">
