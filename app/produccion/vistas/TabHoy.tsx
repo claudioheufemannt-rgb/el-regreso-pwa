@@ -245,7 +245,7 @@ export default function TabHoy({ p }: { p: Produccion }) {
               <Seccion
                 icono={Gauge}
                 titulo="Líneas fijas: cuánto alcanza el stock"
-                detalle={`El catálogo estable no puede quebrar. Días hábiles que alcanza cada formato descontando la venta proyectada ciclo a ciclo${p.escenarioId === 'modelo' ? '' : ' (escenario elegido en Plan o Temporada)'}; la rayita marca el tiempo de cocción (si la barra no llega, ya no da el tiempo).`}
+                detalle={`El catálogo estable no puede quebrar. Días hábiles que alcanza cada formato descontando la venta proyectada ciclo a ciclo${` (escenario ${(p.escenarios.find(e => e.id === p.escenarioId)?.label ?? '').toLowerCase()}; se cambia en Plan, Demanda o Temporada)`}; la rayita marca el tiempo de cocción (si la barra no llega, ya no da el tiempo).`}
                 accion={<button type="button" onClick={() => setActiveTab('plan')} className="flex items-center gap-1 text-xs font-bold text-(--p-accent) hover:underline">Ver el plan completo<ChevronRight size={14} /></button>}
               >
                 {fijas.length === 0 ? (

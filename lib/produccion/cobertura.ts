@@ -84,13 +84,18 @@ export interface DemandaConRango { media: number; min: number; max: number }
  * forecast multiplicado por `factor` (el escenario de venta: 1 = el modelo,
  * 1,2 = un 20% más). El escenario no toca el ciclo en curso: eso ya es venta real.
  */
-function ciclosDeDemanda(serie: SerieDemanda, avance: AvanceCiclo, factor = 1) {
+/** Escenario de venta: un número para todos los ciclos, o uno por ciclo
+ *  (yyyy-mm-01) cuando la incertidumbre crece con el horizonte. */
+export type FactorDemanda = number | ((mes: string) => number)
+export const factorDe = (f: FactorDemanda, mes: string) => (typeof f === 'number' ? f : f(mes))
+
+function ciclosDeDemanda(serie: SerieDemanda, avance: AvanceCiclo, factor: FactorDemanda = 1) {
   const ritmo = avance.diasHabilesTranscurridos > 0 ? serie.litrosMesEnCurso / avance.diasHabilesTranscurridos : 0
   const cicloActual = ritmo * avance.diasHabilesEnCiclo
   return [
     { mes: avance.mes, media: cicloActual, min: cicloActual, max: cicloActual },
     ...serie.puntos.filter(p => p.tipo === 'forecast' && p.mes > avance.mes).map(p => ({
-      mes: p.mes, media: p.litros * factor, min: (p.litrosMin ?? p.litros) * factor, max: (p.litrosMax ?? p.litros) * factor,
+      mes: p.mes, media: p.litros * factorDe(factor, p.mes), min: (p.litrosMin ?? p.litros) * factorDe(factor, p.mes), max: (p.litrosMax ?? p.litros) * factorDe(factor, p.mes),
     })),
   ]
 }
@@ -100,7 +105,7 @@ function ciclosDeDemanda(serie: SerieDemanda, avance: AvanceCiclo, factor = 1) {
  * prorrateando por días los ciclos cortados. El ciclo en curso no tiene
  * forecast (está incompleto): ahí se usa el ritmo real de lo que va del ciclo.
  */
-export function demandaProyectadaConRangoEnPeriodo(serie: SerieDemanda, avance: AvanceCiclo, desdeISO: string, hastaISO: string, factor = 1): DemandaConRango {
+export function demandaProyectadaConRangoEnPeriodo(serie: SerieDemanda, avance: AvanceCiclo, desdeISO: string, hastaISO: string, factor: FactorDemanda = 1): DemandaConRango {
   const ciclos = ciclosDeDemanda(serie, avance, factor)
   let media = 0, min = 0, max = 0
   for (const c of ciclos) {
@@ -113,7 +118,7 @@ export function demandaProyectadaConRangoEnPeriodo(serie: SerieDemanda, avance: 
   }
   return { media, min, max }
 }
-export function demandaProyectadaEnPeriodo(serie: SerieDemanda, avance: AvanceCiclo, desdeISO: string, hastaISO: string, factor = 1): number {
+export function demandaProyectadaEnPeriodo(serie: SerieDemanda, avance: AvanceCiclo, desdeISO: string, hastaISO: string, factor: FactorDemanda = 1): number {
   return demandaProyectadaConRangoEnPeriodo(serie, avance, desdeISO, hastaISO, factor).media
 }
 
@@ -131,7 +136,7 @@ export function demandaProyectadaEnPeriodo(serie: SerieDemanda, avance: AvanceCi
  * Devuelve `agotado: false` si el stock dura más allá del último ciclo con
  * forecast (los días son entonces los que hay hasta ese ciclo, un mínimo).
  */
-export function diasHastaAgotar(series: SerieDemanda[], avance: AvanceCiclo, hoyISO: string, disponible: number, factor = 1): { dias: number; agotado: boolean } | null {
+export function diasHastaAgotar(series: SerieDemanda[], avance: AvanceCiclo, hoyISO: string, disponible: number, factor: FactorDemanda = 1): { dias: number; agotado: boolean } | null {
   // Venta por día hábil de cada ciclo, sumando las series del grupo.
   const tasa = new Map<string, number>()
   let ultimoMes = avance.mes
@@ -244,7 +249,7 @@ export interface OpcionesCobertura {
   avisoDiasHabiles?: number
   /** Escenario de venta: multiplica el forecast de los ciclos que vienen
    *  (1 = el modelo tal cual). No toca la venta real del ciclo en curso. */
-  factorDemanda?: number
+  factorDemanda?: FactorDemanda
 }
 
 const fCorta = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString('es-CL', { day: '2-digit', month: 'short', timeZone: 'UTC' })

@@ -60,6 +60,21 @@ Para evitar los fallos clásicos de los modelos de tendencia cuando la venta se 
 
 ---
 
+## 3b. Backtest v2 y escenarios (17-nov-2026)
+
+`scripts/analisis/backtest_v2_produccion.py`: rolling origin de 12 cortes (nov-2025 a oct-2026), 1 a 4 ciclos adelante, contra 11 métodos (Prophet crudo, Prophet con `b` = el de producción, ETS amortiguado, Theta, estacional ingenuo con y sin crecimiento, media de 3 meses y combinaciones). Métrica WAPE (litros de error / litros reales) y sesgo con signo.
+
+| Nivel | Prophet con `b` (hoy) | + sesgo por estación | Combinación Prophet_b + ETS + estacional, corregida |
+|---|---|---|---|
+| Producto | 28,9% (−14% en temporada, +14% fuera) | 25,6% (sesgo ~0) | 24,9% |
+| Producto × formato | 39,2% (−13% / +17%) | 35,4% | 35,5% |
+
+- A diferencia del backtest de septiembre (1 mes, Prophet sin `b`), con la corrección `b` Prophet ya es competitivo. Su problema es que la corrección es una sola para todo el año: el sesgo real cambia de signo con la estación.
+- Los factores por estación se midieron dejando fuera el producto evaluado (sin trampa). La ventana tiene una sola temporada alta: volver a medir después de mar-2027.
+- Las bandas que guarda el forecast (Prophet sin calibrar) son 1,7-2,4 veces más angostas que el error real. Los escenarios usan los cuantiles empíricos del backtest (P10/P90 de real ÷ pronóstico corregido, ponderados por volumen), que cubren 77-79% de los litros reales.
+- **En la app** (`lib/produccion/escenarios.ts`): selector "Escenario" con Conservador (P10), Base (corrección por estación, valor por defecto), Optimista (P90), "Año pasado ±%" y "Modelo sin corregir". Se aplica por ciclo (estación y horizonte) y por nivel. El pipeline NO cambió: la corrección vive en la app.
+- Pendiente: llevar la corrección por estación y las bandas empíricas al pipeline (`generar_forecast.py` + `calibrar_sigma.py`), para que el stock de seguridad use el error real.
+
 ## 4. Ejecución del Script
 
 ### Localmente

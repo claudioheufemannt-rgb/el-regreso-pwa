@@ -6,7 +6,7 @@ import { CalendarPlus, Factory, ShieldAlert, TrendingUp, PackageCheck } from 'lu
 import { FAMILIA_LABEL, inicioDeCiclo } from '@/lib/produccion/reglas'
 import { fNum, pl } from '../compartido'
 import { Seccion, Kpi, Franja, ChipEstado, Pastillas, ComoSeCalcula, fFecha } from './ui'
-import SelectorEscenario from './SelectorEscenario'
+import SelectorEscenario, { AYUDA_ESCENARIO } from './SelectorEscenario'
 import type { Produccion } from '../useProduccion'
 
 const MES_LARGO = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
@@ -28,7 +28,7 @@ export default function TabTemporada({ p }: { p: Produccion }) {
   const { temporada: t, escenarios, escenarioId, programarDesdeCobertura, guardandoPlan, seguimientoLotes } = p
   const [vista, setVista] = useState<Vista>('total')
   const esc = escenarios.find(e => e.id === escenarioId)
-  const nombreEscenario = esc?.crecimiento == null ? 'según el modelo' : esc.crecimiento === 0 ? 'igual al año pasado' : `año pasado ${esc.label}`
+  const nombreEscenario = `Escenario ${(esc?.label ?? '').toLowerCase()}`
 
   const faltante = t.balance.cerveza.faltante + t.balance.kombucha.faltante
   const primerQuiebre = t.quiebres.find(q => q.lineaFija) ?? t.quiebres[0] ?? null
@@ -56,7 +56,7 @@ export default function TabTemporada({ p }: { p: Produccion }) {
           valor={fNum(t.totales.escenario)}
           unidad="L"
           tono="accent"
-          detalle={`${nombreEscenario[0].toUpperCase()}${nombreEscenario.slice(1)}${variacion != null ? ` · ${pct(variacion)} vs. la temporada pasada (${fNum(t.totales.anterior)} L)` : ''}. El modelo dice ${fNum(t.totales.modelo)} L.`}
+          detalle={`${nombreEscenario}${variacion != null ? ` · ${pct(variacion)} vs. la temporada pasada (${fNum(t.totales.anterior)} L)` : ''}. El modelo dice ${fNum(t.totales.modelo)} L.`}
         />
         <Kpi
           icono={PackageCheck}
@@ -85,6 +85,33 @@ export default function TabTemporada({ p }: { p: Produccion }) {
             : 'Ningún formato se queda sin stock en la temporada con este escenario.'}
         />
       </Franja>
+
+      {/* ── Rango de la temporada: los tres escenarios del backtest lado a lado ── */}
+      <Seccion
+        titulo="Rango de la venta de la temporada"
+        detalle={<>Los tres escenarios a la vez, dic a mar. {AYUDA_ESCENARIO[escenarioId]}</>}
+      >
+        <div className="grid grid-cols-1 gap-px border-t border-(--p-line-2) bg-(--p-line-2) sm:grid-cols-3">
+          {(['conservador', 'base', 'optimista'] as const).map(id => {
+            const r = t.rango[id]
+            const activo = escenarioId === id
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => p.setEscenarioId(id)}
+                aria-pressed={activo}
+                className={`prod-press flex flex-col items-start gap-1 px-5 py-4 text-left ${activo ? 'bg-(--p-accent-soft)' : 'bg-(--p-card) hover:bg-(--p-hover)'}`}
+              >
+                <span className={`prod-eyebrow ${activo ? 'text-(--p-accent)!' : ''}`}>{id === 'conservador' ? 'Conservador · P10' : id === 'base' ? 'Base · más probable' : 'Optimista · P90'}</span>
+                <span className="prod-cifra text-[26px] font-extrabold leading-none text-(--p-text)">{fNum(r.total)} <span className="text-sm font-bold text-(--p-text-3)">L</span></span>
+                <span className="text-xs tabular-nums text-(--p-text-3)">Cerveza {fNum(r.cerveza)} L · kombucha {fNum(r.kombucha)} L</span>
+                {t.totales.anterior > 0 && <span className="text-xs tabular-nums text-(--p-text-3)">{pct(r.total / t.totales.anterior - 1)} vs. la temporada pasada</span>}
+              </button>
+            )
+          })}
+        </div>
+      </Seccion>
 
       {/* ── Venta y capacidad por ciclo ── */}
       <Seccion
@@ -227,7 +254,8 @@ export default function TabTemporada({ p }: { p: Produccion }) {
 
       <section className="prod-card p-4">
         <ComoSeCalcula>
-          <p><strong>Escenario.</strong> &quot;Según el modelo&quot; usa el forecast tal cual. Los demás fijan la venta de los ciclos de la temporada que todavía no empiezan en la del año anterior más el porcentaje, y lo aplican como un factor sobre el forecast de cada producto y formato (hoy: ×{p.escenario.toLocaleString('es-CL', { maximumFractionDigits: 2 })}). La venta del ciclo en curso es siempre la real.</p>
+          <p><strong>Escenarios conservador, base y optimista.</strong> Salen de un backtest (scripts/analisis/backtest_v2_produccion.py): se volvió a pronosticar 12 veces el último año, de 1 a 4 ciclos adelante, y se comparó con lo que se vendió. Base corrige el forecast por su sesgo medido, que depende de la estación (fuera de temporada se pasa ~14%, en temporada se queda corto ~14%). Conservador y optimista son el P10 y el P90 del error real por horizonte: 8 de cada 10 veces la venta cayó entre los dos.</p>
+          <p><strong>Año pasado ±%</strong> fija la venta de los ciclos de la temporada que todavía no empiezan en la del año anterior más el porcentaje. <strong>Modelo sin corregir</strong> es el forecast tal cual. La venta del ciclo en curso es siempre la real.</p>
           <p><strong>Año pasado</strong> es la venta real de los mismos ciclos (24 al 23) de la temporada anterior, por producto. Los productos fuera de producción cuentan en la venta histórica y en el modelo, pero no generan quiebres ni producción.</p>
           <p><strong>Programado</strong> suma los lotes planificados desde hoy en el ciclo en que quedan listos (fecha de cocción + días de fermentación). Los lotes en curso no se suman aparte porque su líquido ya está en los tanques del informe de stock; los planificados con fecha pasada que nadie confirmó tampoco.</p>
           <p><strong>Falta producir</strong> es, por producto y formato, la venta hasta el cierre más el colchón de seguridad menos lo disponible (cámaras + tanques), descontando lo programado de ese producto. Es el mismo cálculo de &quot;A producir&quot; en Plan con &quot;Cubrir hasta&quot; en el cierre de la temporada.</p>

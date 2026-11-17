@@ -5,6 +5,7 @@ import ProductImage from '@/components/ui/ProductImage'
 import { Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceArea, ResponsiveContainer, ComposedChart, Line, Area } from 'recharts'
 import { Sigma } from 'lucide-react'
 import { COLORS } from '../tema'
+import { factorDe } from '@/lib/produccion/cobertura'
 import { ENVASE_LABEL, inicioDeCiclo, finDeCiclo, estaFueraDeProduccion, type EnvaseBucket } from '@/lib/produccion/reglas'
 import { fNum, fPesos, fPesosCorto, etiquetaMes, fCicloCorto, ChipDesviacion, pl } from '../compartido'
 import { Seccion, Pastillas } from './ui'
@@ -15,7 +16,9 @@ import type { Produccion } from '../useProduccion'
  *  por ciclo 24→23). La calculadora de cobertura que vivía acá pasó a Plan,
  *  donde ahora hay un solo cálculo de cuánto producir. */
 export default function TabDemanda({ p }: { p: Produccion }) {
-  const factor = p.escenario
+  // Factor del escenario elegido por ciclo, al nivel producto × formato.
+  const factor = p.factorPara('producto_envase')
+  const nombreEscenario = p.escenarios.find(e => e.id === p.escenarioId)?.label ?? ''
   // Categoría de cada producto, para agrupar el selector.
   const categoriaDe = new Map(p.series.filter(x => x.nivel === 'producto' && x.producto && x.categoria).map(x => [x.producto as string, x.categoria as string]))
   // Próximos 4 ciclos con forecast (después del en curso).
@@ -436,7 +439,7 @@ export default function TabDemanda({ p }: { p: Produccion }) {
                   el escenario elegido. Sigue los mismos filtros de arriba. */}
               <Seccion
                 titulo="Proyección por producto y formato"
-                detalle={<>{filasTabla.length} {pl(filasTabla.length, 'serie', 'series')} · {verNeto ? 'neto a precio de hoy' : 'litros'} por ciclo (24 al 23){factor !== 1 ? <> · con el escenario elegido (×{factor.toLocaleString('es-CL', { maximumFractionDigits: 2 })} sobre el modelo)</> : ' · según el modelo'}. La primera columna es lo vendido en el ciclo en curso.</>}
+                detalle={<>{filasTabla.length} {pl(filasTabla.length, 'serie', 'series')} · {verNeto ? 'neto a precio de hoy' : 'litros'} por ciclo (24 al 23){p.escenarioId === 'modelo' ? ' · modelo sin corregir' : <> · escenario <strong className="text-(--p-text-2)">{nombreEscenario}</strong></>}. La primera columna es lo vendido en el ciclo en curso.</>}
               >
                 <div className="max-h-[560px] overflow-auto border-t border-(--p-line-2)">
                   <table className="w-full min-w-[760px] border-collapse text-left text-[13px]">
@@ -484,7 +487,7 @@ export default function TabDemanda({ p }: { p: Produccion }) {
                               const l = serie.puntos.find(pt => pt.mes === m && pt.tipo === 'forecast')?.litros
                               return (
                                 <td key={m} className={`px-3 py-2 text-right ${esTemporada(m) ? 'font-bold text-(--p-text)' : 'text-(--p-text-2)'}`}>
-                                  {l != null ? valorSerie(serie, l * factor) : <span className="text-(--p-text-4)">—</span>}
+                                  {l != null ? valorSerie(serie, l * factorDe(factor, m)) : <span className="text-(--p-text-4)">—</span>}
                                 </td>
                               )
                             })}
