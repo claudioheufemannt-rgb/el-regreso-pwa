@@ -39,6 +39,12 @@ export default function ProduccionClient(props: ProduccionProps) {
   // esto, al cambiar de pestaña se quedaba a la altura de la anterior.
   const contenidoRef = useRef<HTMLElement>(null)
   useEffect(() => { contenidoRef.current?.scrollTo({ top: 0 }) }, [activeTab])
+  // En el teléfono la barra de pestañas se desplaza de lado (ya son siete):
+  // la activa se trae a la vista para que siempre se sepa dónde se está.
+  const navRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    navRef.current?.querySelector<HTMLElement>('[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [activeTab])
 
   return (
     // prod-root: excluye a este módulo del reset global `* { padding: 0 }` de
@@ -88,7 +94,7 @@ export default function ProduccionClient(props: ProduccionProps) {
         </div>
 
         {/* ── Pestañas ── */}
-        <nav aria-label="Secciones de Producción" className="mt-2 flex gap-1 overflow-x-auto px-2 lg:px-6">
+        <nav ref={navRef} aria-label="Secciones de Producción" className="mt-2 flex gap-1 overflow-x-auto px-2 lg:px-6">
           {navItems.map(item => {
             const activo = activeTab === item.id
             const alertas = alertasPorTab[item.id] ?? 0

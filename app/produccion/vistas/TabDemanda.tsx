@@ -3,17 +3,30 @@
 import React from 'react'
 import ProductImage from '@/components/ui/ProductImage'
 import { Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceArea, ResponsiveContainer, ComposedChart, Line, Area } from 'recharts'
-import { Filter, Info, Sigma } from 'lucide-react'
+import { Sigma } from 'lucide-react'
 import { COLORS } from '../tema'
-import { ENVASE_LABEL, inicioDeCiclo, finDeCiclo, type EnvaseBucket } from '@/lib/produccion/reglas'
-import { fNum, fPesos, fPesosCorto, etiquetaMes, fCicloCorto, ChipDesviacion } from '../compartido'
+import { ENVASE_LABEL, inicioDeCiclo, finDeCiclo, estaFueraDeProduccion, type EnvaseBucket } from '@/lib/produccion/reglas'
+import { fNum, fPesos, fPesosCorto, etiquetaMes, fCicloCorto, ChipDesviacion, pl } from '../compartido'
+import { Seccion, Pastillas } from './ui'
+import SelectorEscenario from './SelectorEscenario'
 import type { Produccion } from '../useProduccion'
 
 /** Demanda: cuánto vamos a vender, por producto y formato (forecast mensual
  *  por ciclo 24→23). La calculadora de cobertura que vivía acá pasó a Plan,
  *  donde ahora hay un solo cálculo de cuánto producir. */
 export default function TabDemanda({ p }: { p: Produccion }) {
-  const { avanceMes, filtroCategoria, setFiltroCategoria, filtroEnvase, setFiltroEnvase, verModelo, setVerModelo, filtroCategoriaForecast, filtroEnvaseForecast, setFiltroEnvaseForecast, filtroProductoForecast, setFiltroProductoForecast, productosForecastDisponibles, envasesForecastDisponibles, serieActual, cambiarCategoriaForecast, mtdLitros, ritmoProyectado, monedaForecast, setMonedaForecast, precioNeto, verNeto, kMoneda, fUnidad, valorSerie, unidadEnvaseSerieActual, chartData, hayDescomposicion, descomposicionProximo, curvaEstacional, ecuacionModelo, tramosTemporadaAlta, precisionSerie, envasesDisponibles, filasTablaDetalle } = p
+  const factor = p.escenario
+  // Categoría de cada producto, para agrupar el selector.
+  const categoriaDe = new Map(p.series.filter(x => x.nivel === 'producto' && x.producto && x.categoria).map(x => [x.producto as string, x.categoria as string]))
+  // Próximos 4 ciclos con forecast (después del en curso).
+  const mesesTabla = [...new Set(p.series.flatMap(x => x.puntos.filter(pt => pt.tipo === 'forecast' && pt.mes > p.avanceMes.mes).map(pt => pt.mes)))].sort().slice(0, 4)
+  const esTemporada = (m: string) => ['12', '01', '02', '03'].includes(m.slice(5, 7))
+  // La tabla sigue a los filtros de arriba (antes tenía los suyos propios).
+  const filasTabla = p.filasTablaDetalle.filter(({ serie }) =>
+    (p.filtroCategoriaForecast === 'todas' || serie.categoria === p.filtroCategoriaForecast)
+    && (p.filtroEnvaseForecast === 'todos' || serie.envaseBucket === p.filtroEnvaseForecast)
+    && (!p.filtroProductoForecast || serie.producto === p.filtroProductoForecast))
+  const { avanceMes, verModelo, setVerModelo, filtroCategoriaForecast, filtroEnvaseForecast, setFiltroEnvaseForecast, filtroProductoForecast, setFiltroProductoForecast, productosForecastDisponibles, envasesForecastDisponibles, serieActual, cambiarCategoriaForecast, monedaForecast, setMonedaForecast, precioNeto, verNeto, kMoneda, fUnidad, valorSerie, unidadEnvaseSerieActual, chartData, hayDescomposicion, descomposicionProximo, curvaEstacional, ecuacionModelo, tramosTemporadaAlta, precisionSerie } = p
   return (
             // h-full (no min-h-full) forzaba esta columna a la altura exacta
             // del viewport: con sólo filtros+gráfico entraba justo, pero al
@@ -23,111 +36,60 @@ export default function TabDemanda({ p }: { p: Produccion }) {
             // computed height de la tarjeta de la tabla: 35px de alto,
             // wrapper interno en 0px pese a tener 94 filas en el DOM.
             <div className="prod-enter flex min-h-full flex-col gap-6">
-
-
-              {/* Filtros — pastillas conectadas en vez de un <select> único con
-                  ~90 combinaciones (producto × envase), donde buscar un
-                  producto puntual era tedioso. Categoría acota qué productos y
-                  envases se ofrecen; Producto y Envase se combinan entre sí
-                  para llegar a la serie exacta (ver la resolución de
-                  serieActual más arriba). */}
-              <div className="flex flex-col gap-3 rounded-xl border border-(--p-line) bg-(--p-card) p-4 shadow-sm">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="w-20 shrink-0 text-xs font-bold uppercase tracking-wider text-(--p-text-3)">Categoría</span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(['todas', 'cerveza', 'kombucha'] as const).map(c => (
-                      <button
-                        key={c}
-                        type="button"
-                        onClick={() => cambiarCategoriaForecast(c)}
-                        className={`prod-press rounded-full px-3 py-1.5 text-xs font-bold capitalize ${
-                          filtroCategoriaForecast === c ? 'border border-(--p-accent-line) bg-(--p-accent-soft) text-(--p-accent)' : 'border border-(--p-line) text-(--p-text-3) hover:bg-(--p-hover)'
-                        }`}
-                      >
-                        {c === 'todas' ? 'Todas' : c}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="w-20 shrink-0 text-xs font-bold uppercase tracking-wider text-(--p-text-3)">Formato</span>
-                  <div className="flex flex-wrap gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setFiltroEnvaseForecast('todos')}
-                      className={`prod-press rounded-full px-3 py-1.5 text-xs font-bold ${
-                        filtroEnvaseForecast === 'todos' ? 'border border-(--p-accent-line) bg-(--p-accent-soft) text-(--p-accent)' : 'border border-(--p-line) text-(--p-text-3) hover:bg-(--p-hover)'
-                      }`}
-                    >
-                      Todos los formatos
-                    </button>
-                    {envasesForecastDisponibles.map(b => (
-                      <button
-                        key={b}
-                        type="button"
-                        onClick={() => setFiltroEnvaseForecast(b)}
-                        className={`prod-press rounded-full px-3 py-1.5 text-xs font-bold ${
-                          filtroEnvaseForecast === b ? 'border border-(--p-accent-line) bg-(--p-accent-soft) text-(--p-accent)' : 'border border-(--p-line) text-(--p-text-3) hover:bg-(--p-hover)'
-                        }`}
-                      >
-                        {ENVASE_LABEL[b]}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-start gap-2">
-                  <span className="w-20 shrink-0 pt-1.5 text-xs font-bold uppercase tracking-wider text-(--p-text-3)">Producto</span>
-                  <div className="flex max-h-36 flex-wrap gap-1.5 overflow-y-auto">
-                    <button
-                      type="button"
-                      onClick={() => setFiltroProductoForecast(null)}
-                      className={`prod-press rounded-full px-3 py-1.5 text-xs font-bold ${
-                        !filtroProductoForecast ? 'border border-(--p-accent-line) bg-(--p-accent-soft) text-(--p-accent)' : 'border border-(--p-line) text-(--p-text-3) hover:bg-(--p-hover)'
-                      }`}
-                    >
-                      Todos (consolidado)
-                    </button>
-                    {productosForecastDisponibles.map(p => (
-                      <button
-                        key={p}
-                        type="button"
-                        onClick={() => setFiltroProductoForecast(p)}
-                        className={`prod-press rounded-full px-3 py-1.5 text-xs font-bold ${
-                          filtroProductoForecast === p ? 'border border-(--p-accent-line) bg-(--p-accent-soft) text-(--p-accent)' : 'border border-(--p-line) text-(--p-text-3) hover:bg-(--p-hover)'
-                        }`}
-                      >
-                        {p}
-                      </button>
-                    ))}
-                    {productosForecastDisponibles.length === 0 && (
-                      <span className="py-1.5 text-xs text-(--p-text-3)">Ningún producto tiene ese formato en esta categoría.</span>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 border-t border-(--p-line-2) pt-3 text-xs text-(--p-text-3)">
-                  <Filter size={14} className="shrink-0 text-(--p-text-3)" />
-                  <span className="font-semibold text-(--p-text-2)">{serieActual?.label ?? 'Consolidado'}</span>
-                  <span className="text-(--p-text-4)">·</span>
-                  <span>
-                    {serieActual?.mesesHistorial != null
-                      ? `${serieActual.mesesHistorial} meses de ventas reales`
-                      : `${chartData.filter(d => d.ventaReal != null).length} meses de ventas reales`}
-                  </span>
-                </div>
+              {/* Filtros en UNA barra (17-nov-2026): antes eran tres filas de
+                  pastillas, con 23 productos, y el gráfico quedaba bajo el
+                  pliegue. Categoría y formato siguen como pastillas (pocas
+                  opciones); el producto pasa a un selector agrupado por línea.
+                  Categoría acota qué productos y formatos se ofrecen; producto
+                  y formato se combinan para llegar a la serie exacta. */}
+              <div className="prod-card flex flex-wrap items-center gap-x-5 gap-y-3 px-4 py-3">
+                <Pastillas
+                  etiqueta="Categoría"
+                  valor={filtroCategoriaForecast}
+                  onCambiar={cambiarCategoriaForecast}
+                  opciones={[{ id: 'todas', label: 'Todo' }, { id: 'cerveza', label: 'Cerveza' }, { id: 'kombucha', label: 'Kombucha' }]}
+                />
+                <span className="hidden h-5 w-px bg-(--p-line) md:block" />
+                <Pastillas<string>
+                  etiqueta="Formato"
+                  valor={filtroEnvaseForecast}
+                  onCambiar={v => setFiltroEnvaseForecast(v as 'todos' | EnvaseBucket)}
+                  opciones={[{ id: 'todos', label: 'Todos los formatos' }, ...envasesForecastDisponibles.map(b => ({ id: b as string, label: ENVASE_LABEL[b] }))]}
+                />
+                <span className="hidden h-5 w-px bg-(--p-line) md:block" />
+                <label className="flex min-w-0 items-center gap-2 text-xs font-semibold text-(--p-text-3)">
+                  Producto
+                  <select
+                    id="demanda-producto"
+                    value={filtroProductoForecast ?? ''}
+                    onChange={e => setFiltroProductoForecast(e.target.value || null)}
+                    className="min-w-0 max-w-[240px] rounded-lg border border-(--p-line) bg-(--p-card-2) px-2.5 py-1.5 text-sm font-bold text-(--p-text) focus:border-(--p-accent) focus:outline-none"
+                  >
+                    <option value="">Todos (consolidado)</option>
+                    {(['cerveza', 'kombucha'] as const).map(cat => {
+                      const lista = productosForecastDisponibles.filter(x => categoriaDe.get(x) === cat)
+                      return lista.length > 0 ? (
+                        <optgroup key={cat} label={cat === 'cerveza' ? 'Cerveza' : 'Kombucha'}>
+                          {lista.map(x => <option key={x} value={x}>{x}</option>)}
+                        </optgroup>
+                      ) : null
+                    })}
+                    {productosForecastDisponibles.filter(x => !categoriaDe.has(x)).map(x => <option key={x} value={x}>{x}</option>)}
+                  </select>
+                </label>
+                <div className="ml-auto"><SelectorEscenario p={p} /></div>
               </div>
 
+              <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_272px]">
               {/* Gráfico */}
               <div className="flex flex-col rounded-xl border border-(--p-line) bg-(--p-card) p-4 shadow-sm lg:p-6">
                 <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <h3 className="text-lg font-bold text-(--p-text)">
-                      Proyección de Demanda ({verNeto ? 'Neto $' : 'Litros'}) vs. Venta Real
+                    <h3 className="text-[17px] font-bold tracking-[-0.01em] text-(--p-text)">
+                      {serieActual?.label ?? 'Consolidado'}: venta real y proyectada
                     </h3>
-                    <p className="mt-1 text-sm text-(--p-text-3)">
-                      {serieActual?.label ?? '—'} · la franja sombreada marca la temporada alta (Dic–Feb).
+                    <p className="mt-1 text-[13px] text-(--p-text-3)">
+                      {verNeto ? 'Neto a precio de hoy' : 'Litros'} por ciclo · {serieActual?.mesesHistorial ?? chartData.filter(d => d.ventaReal != null).length} meses de historia · la franja sombreada es la temporada alta. El gráfico muestra el modelo; el escenario elegido se aplica en la tabla de abajo.
                     </p>
                     {/* La conversión a unidades sólo aparece cuando la serie elegida
                         es un producto×envase concreto (no "todos los formatos" ni un
@@ -193,7 +155,7 @@ export default function TabDemanda({ p }: { p: Produccion }) {
                           : precisionSerie >= 70 ? 'border-(--p-warn-line) bg-(--p-warn-soft) text-(--p-warn)'
                             : 'border-(--p-bad-line) bg-(--p-bad-soft) text-(--p-bad)'
                       }`}>
-                        Precisión Histórica: {precisionSerie.toFixed(0)}%
+                        Precisión del modelo: {precisionSerie.toFixed(0)}%
                       </div>
                     )}
                   </div>
@@ -426,6 +388,9 @@ export default function TabDemanda({ p }: { p: Produccion }) {
                 </div>
               </div>
 
+                <EsteCiclo p={p} />
+              </div>
+
               {/* ── Curva estacional aprendida por el modelo ── */}
               {verModelo && curvaEstacional.length > 0 && (
                 <div className="flex flex-col rounded-xl border border-(--p-line) bg-(--p-card) p-4 shadow-sm lg:p-6">
@@ -465,166 +430,115 @@ export default function TabDemanda({ p }: { p: Produccion }) {
                 </div>
               )}
 
-              {/* ¿Vamos a cumplir lo proyectado? — comparación simple del mes en curso */}
-              {mtdLitros > 0 && (() => {
-                const objetivo = chartData.find(f => f.mesIso === avanceMes.mes)?.ventaProyectada ?? null
-                const pct = objetivo != null && objetivo > 0 ? ((ritmoProyectado * kMoneda) / objetivo) * 100 : null
-                const cumple = pct != null && pct >= 95
-                const avancePct = Math.min(100, (avanceMes.diaActual / avanceMes.diasEnMes) * 100)
-                return (
-                  <div className="overflow-hidden rounded-xl border border-(--p-line) bg-(--p-card) shadow-sm">
-                    <div className="grid gap-px bg-(--p-line) sm:grid-cols-3">
-                      <div className="bg-(--p-card) p-5">
-                        <p
-                          className="flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-(--p-text-3)"
-                          title="Cuenta por fecha de pedido, no de entrega — a diferencia de Ventas, que sólo suma lo ya despachado. Producción necesita la señal apenas se toma el pedido, no cuando se despacha."
-                        >
-                          Vendido este mes
-                          <Info size={11} className="text-(--p-text-4)" />
-                        </p>
-                        <p className="mt-1 text-3xl font-black tabular-nums text-(--p-text)">{fUnidad(mtdLitros * kMoneda)}</p>
-                        <p className="text-[10px] text-(--p-text-3)">por fecha de pedido, no de entrega</p>
-                        {/* Barra de avance del mes: el número solo no dice si
-                            vamos temprano o tarde en el período. */}
-                        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-(--p-chip)">
-                          <div className="h-full rounded-full" style={{ width: `${avancePct}%`, backgroundColor: COLORS.neutro }} />
-                        </div>
-                        <p className="mt-1.5 text-xs text-(--p-text-3)">día {avanceMes.diaActual} de {avanceMes.diasEnMes}</p>
-                      </div>
-
-                      <div className="bg-(--p-card) p-5">
-                        <p className="text-[11px] font-bold uppercase tracking-wider text-(--p-text-3)">A este ritmo cerrarías con</p>
-                        <p className="mt-1 text-3xl font-black tabular-nums" style={{ color: COLORS.contraste }}>{fUnidad(ritmoProyectado * kMoneda)}</p>
-                        <p className="mt-[14px] text-xs text-(--p-text-3)">extrapolación lineal de lo vendido</p>
-                      </div>
-
-                      {objetivo != null && pct != null && (
-                        <div className="bg-(--p-card) p-5">
-                          <p className="text-[11px] font-bold uppercase tracking-wider text-(--p-text-3)">El modelo proyectó</p>
-                          <p className="mt-1 text-3xl font-black tabular-nums" style={{ color: COLORS.primario }}>{fUnidad(objetivo)}</p>
-                          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-(--p-chip)">
-                            <div
-                              className="h-full rounded-full"
-                              style={{ width: `${Math.min(100, pct)}%`, backgroundColor: cumple ? COLORS.ok : COLORS.bad }}
-                            />
-                          </div>
-                          <p className={`mt-1.5 text-xs font-bold ${cumple ? 'text-(--p-ok)' : 'text-(--p-bad)'}`}>
-                            {cumple ? '✓' : '⚠'} vas al {pct.toFixed(0)}% de lo proyectado
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )
-              })()}
-
-              {/* ── Detalle por producto y envase ── */}
-              <div className="flex flex-col overflow-hidden rounded-xl border border-(--p-line) bg-(--p-card) shadow-sm">
-                <div className="flex flex-wrap items-center justify-between gap-4 border-b border-(--p-line-2) bg-(--p-card-2)/50 p-5">
-                  <div>
-                    <h3 className="font-bold text-(--p-text)">Detalle por producto y envase</h3>
-                    <p className="mt-1 text-sm text-(--p-text-3)">
-                      {filasTablaDetalle.length} combinaciones · {monedaForecast === 'neto' ? 'neto vendido (a precio de hoy) en lo que va del mes y proyección del próximo mes cerrado' : 'litros vendidos en lo que va del mes y proyección del próximo mes cerrado'}.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {(['todas', 'cerveza', 'kombucha'] as const).map(c => (
-                      <button
-                        key={c}
-                        onClick={() => setFiltroCategoria(c)}
-                        className={`rounded-full border px-3 py-1.5 text-xs font-bold capitalize transition-colors ${
-                          filtroCategoria === c
-                            ? 'border-(--p-accent-line) bg-(--p-accent-soft) text-(--p-accent)'
-                            : 'border-(--p-line) bg-(--p-card) text-(--p-text-3) hover:bg-(--p-hover)'
-                        }`}
-                      >
-                        {c === 'todas' ? 'Todas' : c}
-                      </button>
-                    ))}
-                    <span className="mx-1 self-center text-(--p-text-4)">|</span>
-                    <select
-                      value={filtroEnvase}
-                      onChange={e => setFiltroEnvase(e.target.value)}
-                      className="rounded-full border border-(--p-line) bg-(--p-card) px-3 py-1.5 text-xs font-bold text-(--p-text-2) focus:outline-none focus:ring-2 focus:ring-amber-500"
-                    >
-                      <option value="todos">Todos los envases</option>
-                      {envasesDisponibles.map(b => <option key={b} value={b}>{ENVASE_LABEL[b as EnvaseBucket] ?? b}</option>)}
-                    </select>
-                  </div>
-                </div>
-
-                <div className="max-h-[520px] overflow-auto">
-                  <table className="w-full border-collapse text-left">
-                    <thead className="sticky top-0 z-10 bg-(--p-chip) text-xs font-bold uppercase tracking-wider text-(--p-text-2) shadow-sm">
+              {/* ── Proyección por producto y formato ──
+                  17-nov-2026: antes mostraba sólo "próximo mes". Para planificar
+                  la temporada hacen falta los próximos ciclos lado a lado, con
+                  el escenario elegido. Sigue los mismos filtros de arriba. */}
+              <Seccion
+                titulo="Proyección por producto y formato"
+                detalle={<>{filasTabla.length} {pl(filasTabla.length, 'serie', 'series')} · {verNeto ? 'neto a precio de hoy' : 'litros'} por ciclo (24 al 23){factor !== 1 ? <> · con el escenario elegido (×{factor.toLocaleString('es-CL', { maximumFractionDigits: 2 })} sobre el modelo)</> : ' · según el modelo'}. La primera columna es lo vendido en el ciclo en curso.</>}
+              >
+                <div className="max-h-[560px] overflow-auto border-t border-(--p-line-2)">
+                  <table className="w-full min-w-[760px] border-collapse text-left text-[13px]">
+                    <thead className="sticky top-0 z-10 bg-(--p-card-2) text-[10.5px] font-bold uppercase tracking-wide text-(--p-text-3)">
                       <tr>
-                        <th className="px-6 py-3 font-bold">Producto</th>
-                        <th className="px-4 py-3 font-bold">Envase</th>
-                        <th className="px-4 py-3 font-bold">Categoría</th>
-                        <th className="px-4 py-3 text-right font-bold">Vendido este mes</th>
-                        <th className="px-4 py-3 text-right font-bold text-(--p-warn)">Próximo mes (proy.)</th>
-                        <th className="px-6 py-3 text-center font-bold" title="Error del backtest (MAPE) — más alto es peor, no una confiabilidad de 0-100%.">Desviación</th>
+                        <th className="px-5 py-2.5">Producto</th>
+                        <th className="px-3 py-2.5">Formato</th>
+                        <th className="px-3 py-2.5 text-right" title="Vendido en lo que va del ciclo en curso, por fecha de pedido">Este ciclo</th>
+                        {mesesTabla.map(m => (
+                          <th key={m} className={`px-3 py-2.5 text-right ${esTemporada(m) ? 'text-(--p-accent)' : ''}`} title={`${fCicloCorto(inicioDeCiclo(m))} – ${fCicloCorto(finDeCiclo(m))}`}>{etiquetaMes(m)}</th>
+                        ))}
+                        <th className="px-5 py-2.5 text-center" title="Error del backtest (MAPE): cuánto se equivocó el modelo en promedio. Más alto es peor.">Error típico</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-(--p-line-2) text-sm">
-                      {filasTablaDetalle.length === 0 && (
-                        <tr><td colSpan={6} className="px-6 py-10 text-center text-(--p-text-3)">Sin combinaciones para este filtro.</td></tr>
+                    <tbody className="tabular-nums">
+                      {filasTabla.length === 0 && (
+                        <tr><td colSpan={4 + mesesTabla.length} className="px-5 py-10 text-center text-(--p-text-3)">Sin series para este filtro.</td></tr>
                       )}
-                      {filasTablaDetalle.map(({ serie, proximo }, i) => {
-                        const productoRepetido = i > 0 && filasTablaDetalle[i - 1].serie.producto === serie.producto
+                      {filasTabla.map(({ serie }, i) => {
+                        const repetido = i > 0 && filasTabla[i - 1].serie.producto === serie.producto
+                        const fuera = estaFueraDeProduccion(serie.producto ?? '')
                         return (
-                          <tr key={serie.id} className="prod-hover-row transition-colors hover:bg-(--p-hover)">
-                            <td className="px-6 py-2.5 font-semibold text-(--p-text)">
-                              {productoRepetido ? (
-                                <span className="pl-[42px] text-(--p-text-4)">″</span>
-                              ) : (
+                          <tr key={serie.id} className={`prod-hover-row hover:bg-(--p-hover) ${repetido ? '' : 'border-t border-(--p-line-2)'} ${fuera ? 'opacity-55' : ''}`}>
+                            <td className="px-5 py-2 font-semibold text-(--p-text)">
+                              {repetido ? null : (
                                 <span className="inline-flex items-center gap-2.5">
-                                  <ProductImage
-                                    nombre={serie.producto} categoria={serie.categoria}
-                                    esBarril={serie.envaseBucket === 'barril_30' || serie.envaseBucket === 'barril_50'}
-                                    size={32} radius={8}
-                                  />
-                                  {serie.producto}
+                                  <ProductImage nombre={serie.producto} categoria={serie.categoria} size={26} radius={6} />
+                                  <span className="max-w-[220px] leading-tight">
+                                    {serie.producto}
+                                    {fuera && <span className="block text-[10.5px] font-semibold text-(--p-text-3)" title="No se produce: el modelo lo sigue proyectando por su historia, pero no entra al plan ni a las alarmas.">Fuera de producción</span>}
+                                  </span>
                                 </span>
                               )}
                             </td>
-                            <td className="px-4 py-2.5 text-(--p-text-2)">
-                              <span className="inline-flex items-center gap-2">
+                            <td className="px-3 py-2 text-(--p-text-2)">
+                              <span className="inline-flex items-center gap-1.5">
                                 {ENVASE_LABEL[(serie.envaseBucket ?? 'otros') as EnvaseBucket] ?? serie.envaseBucket}
                                 {serie.metodo === 'derivado' && (
-                                  <span
-                                    className="inline-block rounded-full border border-(--p-info-line) bg-(--p-info-soft) px-1.5 py-0.5 text-[10px] font-bold text-(--p-info)"
-                                    title="Muy poca historia propia para confiar en un modelo entrenado sólo sobre este formato — se repartió el forecast del producto según qué % de él fue este formato recientemente."
-                                  >
-                                    derivado
-                                  </span>
+                                  <span className="rounded-full bg-(--p-info-soft) px-1.5 text-[10px] font-bold text-(--p-info)" title="Poca historia propia: el número sale de repartir el forecast del producto según cuánto pesó este formato últimamente.">derivado</span>
                                 )}
                               </span>
                             </td>
-                            <td className="px-4 py-2.5">
-                              {serie.categoria && (
-                                <span className={`rounded-full border px-2 py-0.5 text-xs font-bold capitalize ${
-                                  serie.categoria === 'cerveza' ? 'border-(--p-ok-line) bg-(--p-ok-soft) text-(--p-ok)' : 'border-(--p-warn-line) bg-(--p-warn-soft) text-(--p-warn)'
-                                }`}>
-                                  {serie.categoria}
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-4 py-2.5 text-right tabular-nums text-(--p-text-2)">
-                              {serie.litrosMesEnCurso > 0 ? valorSerie(serie, serie.litrosMesEnCurso) : <span className="text-(--p-text-4)">—</span>}
-                            </td>
-                            <td className="px-4 py-2.5 text-right font-bold tabular-nums text-(--p-text)">
-                              {proximo ? valorSerie(serie, proximo.litros) : <span className="text-(--p-text-4)">sin datos</span>}
-                            </td>
-                            <td className="px-6 py-2.5 text-center">
-                              <ChipDesviacion mape={serie.mape} derivado={serie.metodo === 'derivado'} />
-                            </td>
+                            <td className="px-3 py-2 text-right text-(--p-text-2)">{serie.litrosMesEnCurso > 0 ? valorSerie(serie, serie.litrosMesEnCurso) : <span className="text-(--p-text-4)">—</span>}</td>
+                            {mesesTabla.map(m => {
+                              const l = serie.puntos.find(pt => pt.mes === m && pt.tipo === 'forecast')?.litros
+                              return (
+                                <td key={m} className={`px-3 py-2 text-right ${esTemporada(m) ? 'font-bold text-(--p-text)' : 'text-(--p-text-2)'}`}>
+                                  {l != null ? valorSerie(serie, l * factor) : <span className="text-(--p-text-4)">—</span>}
+                                </td>
+                              )
+                            })}
+                            <td className="px-5 py-2 text-center"><ChipDesviacion mape={serie.mape} derivado={serie.metodo === 'derivado'} /></td>
                           </tr>
                         )
                       })}
                     </tbody>
                   </table>
                 </div>
-              </div>
+              </Seccion>
             </div>
+  )
+}
+
+/**
+ * El ciclo en curso al lado del gráfico (17-nov-2026; antes estaba al fondo
+ * de la pestaña): lo vendido, a qué cierra al ritmo de los días hábiles y
+ * contra qué proyectó el modelo. En días HÁBILES, igual que Hoy: la pestaña
+ * decía "día 25 de 31" y Hoy "día hábil 17 de 21" para lo mismo.
+ */
+function EsteCiclo({ p }: { p: Produccion }) {
+  const { avanceMes, mtdLitros, ritmoProyectado, chartData, kMoneda, fUnidad } = p
+  const objetivo = chartData.find(f => f.mesIso === avanceMes.mes)?.ventaProyectada ?? null
+  const cierre = ritmoProyectado * kMoneda
+  const pct = objetivo != null && objetivo > 0 ? (cierre / objetivo) * 100 : null
+  const avance = avanceMes.diasHabilesEnCiclo > 0 ? avanceMes.diasHabilesTranscurridos / avanceMes.diasHabilesEnCiclo : 0
+  const escala = Math.max(cierre, objetivo ?? 0, 1)
+  const fila = (etiqueta: string, valor: number | null, color: string, nota: string) => (
+    <div className="flex flex-col gap-1.5 px-4 py-3.5">
+      <span className="prod-eyebrow">{etiqueta}</span>
+      <span className="prod-cifra text-[26px] font-extrabold leading-none" style={{ color }}>{valor != null ? fUnidad(valor) : '—'}</span>
+      {valor != null && (
+        <span className="h-1.5 overflow-hidden rounded-full bg-(--p-chip)">
+          <span className="block h-full rounded-full" style={{ width: `${Math.min(100, (valor / escala) * 100)}%`, background: color }} />
+        </span>
+      )}
+      <span className="text-[11.5px] leading-snug text-(--p-text-3)">{nota}</span>
+    </div>
+  )
+  return (
+    <aside className="prod-card flex flex-col divide-y divide-(--p-line-2) self-start" aria-label="Ciclo en curso">
+      <div className="px-4 pb-3 pt-3.5">
+        <p className="text-[15px] font-bold text-(--p-text)">Este ciclo</p>
+        <p className="text-xs text-(--p-text-3)">{fCicloCorto(inicioDeCiclo(avanceMes.mes))} – {fCicloCorto(finDeCiclo(avanceMes.mes))} · día hábil {avanceMes.diasHabilesTranscurridos} de {avanceMes.diasHabilesEnCiclo}</p>
+        <span className="mt-2 block h-1 overflow-hidden rounded-full bg-(--p-chip)">
+          <span className="block h-full rounded-full bg-(--p-text-3)" style={{ width: `${avance * 100}%` }} />
+        </span>
+      </div>
+      {fila('Vendido', mtdLitros > 0 ? mtdLitros * kMoneda : null, 'var(--p-text)', 'Por fecha de pedido, no de entrega: Producción necesita la señal apenas entra el pedido.')}
+      {fila('Cierra en', mtdLitros > 0 ? cierre : null, COLORS.contraste, 'Si se sigue vendiendo al ritmo de los días hábiles que van.')}
+      {fila('El modelo proyectó', objetivo, COLORS.primario, pct != null
+        ? `Vas al ${Math.round(pct)}% de lo proyectado${pct >= 110 ? ': el modelo se está quedando corto.' : pct < 95 ? ': por debajo del modelo.' : '.'}`
+        : 'Sin proyección para el ciclo en curso.')}
+    </aside>
   )
 }

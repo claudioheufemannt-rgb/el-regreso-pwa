@@ -5,9 +5,17 @@ import React, { useState } from 'react'
 import ProductImage from '@/components/ui/ProductImage'
 import { ClipboardList, ChevronDown, TrendingUp, Warehouse, CalendarPlus } from 'lucide-react'
 import { ENVASE_LABEL, FAMILIA_LABEL, LEAD_TIME_INSUMOS_SEMANAS } from '@/lib/produccion/reglas'
-import type { CoberturaFamilia, EstadoCobertura } from '@/lib/produccion/cobertura'
+import { ESTADO_LABEL, type CoberturaFamilia, type EstadoCobertura } from '@/lib/produccion/cobertura'
 import { fNum, nombreCamaraCorto, pl } from '../compartido'
-import { Seccion, ChipEstado, BarraCobertura, Pastillas, ComoSeCalcula, fFecha, textoDias } from './ui'
+import { Seccion, ChipEstado, BarraCobertura, Pastillas, ComoSeCalcula, fFecha, textoDias, COLOR_ESTADO } from './ui'
+
+/** Qué significa cada grupo, en una línea, al lado de su encabezado. */
+const TEXTO_GRUPO: Record<EstadoCobertura, string> = {
+  urgente: 'Bajo el colchón o ya pasó la fecha para cocinar: programar ahora.',
+  reponer: 'Bajo el punto de reorden o hay que cocinar en los próximos 10 días hábiles.',
+  ok: 'El stock alcanza más allá del tiempo de cocción.',
+  sin_dato: 'No aparecen en el último informe de stock del ERP.',
+}
 import SelectorEscenario from './SelectorEscenario'
 import type { Produccion } from '../useProduccion'
 
@@ -113,13 +121,29 @@ export default function TabPlan({ p }: { p: Produccion }) {
                   </p>
                 ) : (
                   <ul className="divide-y divide-(--p-line-2) border-t border-(--p-line-2) xl:border-t-0">
-                    {filas.map(x => {
+                    {filas.map((x, i) => {
                       const exp = abierto === x.producto
                       const lead = Math.max(...x.familias.map(f => f.leadTimeSemanas)) * 5
                       const peor = x.familias.reduce((a, b) => ((a.diasCobertura ?? 1e9) <= (b.diasCobertura ?? 1e9) ? a : b))
                       const vencidoCocer = x.fechaLimiteCocer != null && x.estado === 'urgente'
+                      // Encabezado de grupo cada vez que cambia el estado (la lista
+                      // viene ordenada por estado): se lee "4 urgentes" de un vistazo
+                      // en vez de buscar el chip fila por fila.
+                      const grupo = i === 0 || filas[i - 1].estado !== x.estado
+                      const delGrupo = grupo ? filas.filter(y => y.estado === x.estado) : []
                       return (
-                        <li key={x.producto}>
+                        <React.Fragment key={x.producto}>
+                        {grupo && (
+                          <li className="flex items-baseline gap-2 bg-(--p-card-2) px-5 py-2">
+                            <span className="h-2 w-2 shrink-0 self-center rounded-full" style={{ background: COLOR_ESTADO[x.estado] }} />
+                            <span className="text-[12px] font-bold uppercase tracking-wide" style={{ color: COLOR_ESTADO[x.estado] }}>{ESTADO_LABEL[x.estado]}</span>
+                            <span className="text-[12px] tabular-nums text-(--p-text-3)">
+                              {delGrupo.length} {pl(delGrupo.length, 'producto', 'productos')} · {fNum(delGrupo.reduce((s, y) => s + y.aProducirLitros, 0))} L a producir
+                            </span>
+                            <span className="ml-auto hidden text-[11.5px] text-(--p-text-3) md:inline">{TEXTO_GRUPO[x.estado]}</span>
+                          </li>
+                        )}
+                        <li>
                           <div className="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-2 px-5 py-3 xl:grid-cols-[minmax(210px,1.7fr)_118px_minmax(150px,1fr)_minmax(170px,1.2fr)_104px_112px_112px_118px]">
                             {/* Producto */}
                             <button type="button" onClick={() => setAbierto(exp ? null : x.producto)} aria-expanded={exp} className="flex min-w-0 items-center gap-2.5 text-left">
@@ -232,6 +256,7 @@ export default function TabPlan({ p }: { p: Produccion }) {
                             </div>
                           </div>
                         </li>
+                        </React.Fragment>
                       )
                     })}
                   </ul>
