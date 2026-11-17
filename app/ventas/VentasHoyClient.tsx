@@ -47,6 +47,17 @@ const C = {
 
 // ── Formato ──────────────────────────────────────────────────────────────────
 const fL = (n: number) => `${n.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} L`
+
+/* Entregado vs. por entregar según el criterio del rango (`porEntrega`):
+ * - porEntrega=false (por fecha de pedido, el criterio desde 17-nov-2026 —
+ *   "si el pedido sale como pendiente igual lo sumes"): `base` YA es el total
+ *   con pendientes y `pend` es una parte de él.
+ * - porEntrega=true (criterio anterior, sólo lo entregado): `base` es lo
+ *   entregado y `pend` va aparte, se suma para el total. */
+const conPendientes = (base: number, pend: number, porEntrega: boolean) => porEntrega ? base + pend : base
+const soloEntregado = (base: number, pend: number, porEntrega: boolean) => porEntrega ? base : Math.max(0, base - pend)
+const esSoloPendiente = (base: number, pend: number | undefined, porEntrega: boolean) =>
+  !!pend && pend > 0 && soloEntregado(base, pend, porEntrega) < 0.05
 const fNum = (n: number) => n.toLocaleString('es-CL')
 /** Monto siempre completo, nunca abreviado ($254.150, no "$254k"): el
  *  redondeo a "k"/"M" esconde plata real. */
@@ -619,10 +630,12 @@ function SheetDetalle({ tipo, envaseBucket, categoria, origenPedidos, porEntrega
             // el total), no la versión chica y neutra de antes.
             <div style={{ marginTop: 12, background: C.card, border: `1px solid ${C.line}`, borderRadius: 14, padding: isDesktop ? '16px 18px' : '12px 14px' }}>
               <div style={{ display: 'flex', gap: isDesktop ? 28 : 16, flexWrap: 'wrap' }}>
+                {/* Desde 17-nov-2026 `totales.litros` ya es el TOTAL (pendientes
+                    incluidos, por fecha de pedido); lo entregado es la resta. */}
                 <div style={{ minWidth: 0 }}>
                   <p style={{ fontSize: 12, color: C.green, fontWeight: 700, letterSpacing: '0.02em' }}>ENTREGADO</p>
-                  <p style={{ fontSize: isDesktop ? 30 : 22, fontWeight: 800, color: C.green, letterSpacing: '-0.5px', whiteSpace: 'nowrap', lineHeight: 1.15 }}>{fL(totales.litros)}</p>
-                  <p style={{ fontSize: isDesktop ? 13.5 : 12, color: C.green, fontWeight: 600, whiteSpace: 'nowrap' }}>{fPesoFull(totales.revenue)}</p>
+                  <p style={{ fontSize: isDesktop ? 30 : 22, fontWeight: 800, color: C.green, letterSpacing: '-0.5px', whiteSpace: 'nowrap', lineHeight: 1.15 }}>{fL(soloEntregado(totales.litros, totales.litrosPorEntregar, porEntrega))}</p>
+                  <p style={{ fontSize: isDesktop ? 13.5 : 12, color: C.green, fontWeight: 600, whiteSpace: 'nowrap' }}>{fPesoFull(soloEntregado(totales.revenue, totales.revenuePorEntregar, porEntrega))}</p>
                 </div>
                 {totales.litrosPorEntregar > 0 && (
                   <div style={{ minWidth: 0 }}>
@@ -633,17 +646,18 @@ function SheetDetalle({ tipo, envaseBucket, categoria, origenPedidos, porEntrega
                 )}
                 <div style={{ minWidth: 0 }}>
                   <p style={{ fontSize: 12, color: C.text, fontWeight: 700, letterSpacing: '0.02em' }}>TOTAL</p>
-                  <p style={{ fontSize: isDesktop ? 30 : 22, fontWeight: 800, color: C.text, letterSpacing: '-0.5px', whiteSpace: 'nowrap', lineHeight: 1.15 }}>{fL(totales.litros + totales.litrosPorEntregar)}</p>
-                  <p style={{ fontSize: isDesktop ? 13.5 : 12, color: C.text, fontWeight: 600, whiteSpace: 'nowrap' }}>{fPesoFull(totales.revenue + totales.revenuePorEntregar)}</p>
+                  <p style={{ fontSize: isDesktop ? 30 : 22, fontWeight: 800, color: C.text, letterSpacing: '-0.5px', whiteSpace: 'nowrap', lineHeight: 1.15 }}>{fL(conPendientes(totales.litros, totales.litrosPorEntregar, porEntrega))}</p>
+                  <p style={{ fontSize: isDesktop ? 13.5 : 12, color: C.text, fontWeight: 600, whiteSpace: 'nowrap' }}>{fPesoFull(conPendientes(totales.revenue, totales.revenuePorEntregar, porEntrega))}</p>
                 </div>
               </div>
               {(totales.litrosCerveza > 0 || totales.litrosKombucha > 0) && (
                 <p style={{ fontSize: 11, color: C.muted, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.line}` }}>
                   🍺 Cerveza {fL(totales.litrosCerveza)} · 🧃 Kombucha {fL(totales.litrosKombucha)}
                   {' · '}{fNum(totales.clientes)} {totales.clientes === 1 ? 'cliente' : 'clientes'}
-                  {/* "entregados" explícito: es el mismo número de la tarjeta
-                      "Pedidos" de arriba, que no cuenta los pendientes. */}
-                  {' · '}{fNum(totales.pedidos)} {totales.pedidos === 1 ? 'pedido entregado' : 'pedidos entregados'}
+                  {/* Mismo número de la tarjeta "Pedidos" de arriba. */}
+                  {' · '}{fNum(totales.pedidos)} {porEntrega
+                    ? (totales.pedidos === 1 ? 'pedido entregado' : 'pedidos entregados')
+                    : (totales.pedidos === 1 ? 'pedido' : 'pedidos')}
                 </p>
               )}
             </div>
@@ -744,7 +758,7 @@ function SheetDetalle({ tipo, envaseBucket, categoria, origenPedidos, porEntrega
                 const p = esProd ? (f as FilaProducto) : null
                 const ped = esPedidos ? (f as FilaPedido) : null
                 const c = esProd || esPedidos ? null : (f as FilaCliente)
-                const soloPendiente = !!c && c.litros === 0 && !!c.litrosPorEntregar && c.litrosPorEntregar > 0
+                const soloPendiente = !!c && esSoloPendiente(c.litros, c.litrosPorEntregar, porEntrega)
                 const pedPendiente = !!ped && ped.entregado === false
                 const tintCat = p?.categoria === 'Kombucha' ? C.green : p?.categoria === 'Cerveza' ? C.hero : C.purple
                 // Clave de expansión: cliente, pedido o producto+envase, según
@@ -1016,7 +1030,7 @@ function DetalleClientesVendedor({ vendedor, desde, hasta, porEntrega }: {
       )}
       {visibles.map(c => {
         const abiertoAqui = abierto === c.cliente
-        const soloPendiente = c.litros === 0 && !!c.litrosPorEntregar && c.litrosPorEntregar > 0
+        const soloPendiente = esSoloPendiente(c.litros, c.litrosPorEntregar, porEntrega)
         return (
           <div key={c.cliente} style={{ background: C.bg, border: `1px solid ${abiertoAqui ? C.blue : C.line}`, borderRadius: 10, padding: '9px 11px' }}>
             <button
@@ -1054,7 +1068,7 @@ function DetalleClientesVendedor({ vendedor, desde, hasta, porEntrega }: {
               <p style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>Por entregar · sin nada despachado aún</p>
             ) : !!c.litrosPorEntregar && c.litrosPorEntregar > 0 && (
               <p style={{ fontSize: 11, color: C.amber, marginTop: 6 }}>
-                + {fL(c.litrosPorEntregar)} por entregar
+                {porEntrega ? '+ ' : 'incluye '}{fL(c.litrosPorEntregar)} por entregar
               </p>
             )}
             {abiertoAqui && (
@@ -1315,20 +1329,20 @@ function FilaVendedor({ v, pos, total, desde, hasta, porEntrega, mostrarAnio, an
             <span style={{ display: 'block', fontSize: 14, fontWeight: 600, color: C.text, lineHeight: 1.3, wordBreak: 'break-word' }}>{etiquetaVendedor(v.vendedor)}</span>
             {hayPorEntregar && (
               <span style={{ display: 'block', fontSize: 11, color: C.muted, marginTop: 2 }}>
-                {fL(v.litros + v.litrosPorEntregar)} total con lo por entregar
+                {porEntrega ? `${fL(v.litros + v.litrosPorEntregar)} total con lo por entregar` : `incluye ${fL(v.litrosPorEntregar)} por entregar`}
               </span>
             )}
           </span>
           <span style={{ textAlign: 'right', minWidth: 0 }}>
             <span style={{ display: 'block', fontSize: 16, fontWeight: 700, color: C.text, whiteSpace: 'nowrap' }}>{fL(v.litros)}</span>
             {hayPorEntregar && (
-              <span style={{ display: 'block', fontSize: 11, color: C.amber, whiteSpace: 'nowrap', marginTop: 2 }}>+ {fL(v.litrosPorEntregar)}</span>
+              <span style={{ display: 'block', fontSize: 11, color: C.amber, whiteSpace: 'nowrap', marginTop: 2 }}>{porEntrega ? '+ ' : 'incl. '}{fL(v.litrosPorEntregar)}</span>
             )}
           </span>
           <span style={{ textAlign: 'right', minWidth: 0 }}>
             <span style={{ display: 'block', fontSize: 16, fontWeight: 700, color: C.text, whiteSpace: 'nowrap' }}>{fPesoFull(v.revenue)}</span>
             {hayPorEntregar && (
-              <span style={{ display: 'block', fontSize: 11, color: C.amber, whiteSpace: 'nowrap', marginTop: 2 }}>+ {fPesoFull(v.revenuePorEntregar)} por entregar</span>
+              <span style={{ display: 'block', fontSize: 11, color: C.amber, whiteSpace: 'nowrap', marginTop: 2 }}>{porEntrega ? '+ ' : 'incl. '}{fPesoFull(v.revenuePorEntregar)} por entregar</span>
             )}
           </span>
           <span style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', minWidth: 0 }}>
@@ -1413,8 +1427,8 @@ function FilaVendedor({ v, pos, total, desde, hasta, porEntrega, mostrarAnio, an
           </div>
           {v.litrosPorEntregar > 0 && (
             <p style={{ fontSize: 11, color: C.amber, marginTop: 6 }}>
-              + {fL(v.litrosPorEntregar)} · {fPesoFull(v.revenuePorEntregar)} por entregar
-              <span style={{ color: C.muted }}> · {fL(v.litros + v.litrosPorEntregar)} total</span>
+              {porEntrega ? '+ ' : 'incluye '}{fL(v.litrosPorEntregar)} · {fPesoFull(v.revenuePorEntregar)} por entregar
+              {porEntrega && <span style={{ color: C.muted }}> · {fL(v.litros + v.litrosPorEntregar)} total</span>}
             </p>
           )}
         </div>
@@ -2064,7 +2078,7 @@ export default function VentasHoyClient({ data, veComision = false, veComisionVe
           <p style={{ fontSize: isDesktop ? 56 : 42, fontWeight: 800, letterSpacing: '-2px', lineHeight: 1 }}>
             {actual.litros.toLocaleString('es-CL', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
             <span style={{ fontSize: isDesktop ? 26 : 20, marginLeft: 4, color: '#CBD5E1' }}>L</span>
-            <span style={{ fontSize: isDesktop ? 15 : 13, fontWeight: 500, color: '#94A3B8', marginLeft: 8 }}>{d.porEntrega ? 'entregado' : 'pedido'}</span>
+            <span style={{ fontSize: isDesktop ? 15 : 13, fontWeight: 500, color: '#94A3B8', marginLeft: 8 }}>{d.porEntrega ? 'entregado' : 'vendido'}</span>
           </p>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
             {(() => {
@@ -2123,9 +2137,13 @@ export default function VentasHoyClient({ data, veComision = false, veComisionVe
                     </p>
                   </div>
                   <div style={{ flex: '1 1 130px', minWidth: 0 }}>
-                    <p style={{ fontSize: 12, color: '#94A3B8', marginBottom: 4, whiteSpace: 'nowrap' }}>Total</p>
-                    <p style={{ fontSize: isDesktop ? 34 : 28, fontWeight: 800, letterSpacing: '-1px', lineHeight: 1 }}>
-                      {fL(actual.litros + d.entregas.litrosPorEntregar)}
+                    {/* Por fecha de pedido el número grande de arriba YA es el
+                        total con pendientes: acá se muestra lo entregado. */}
+                    <p style={{ fontSize: 12, color: '#94A3B8', marginBottom: 4, whiteSpace: 'nowrap' }}>{d.porEntrega ? 'Total' : 'Entregado'}</p>
+                    <p style={{ fontSize: isDesktop ? 34 : 28, fontWeight: 800, letterSpacing: '-1px', lineHeight: 1, color: d.porEntrega ? undefined : '#34D399' }}>
+                      {fL(d.porEntrega
+                        ? actual.litros + d.entregas.litrosPorEntregar
+                        : soloEntregado(actual.litros, d.entregas.litrosPorEntregar, false))}
                     </p>
                   </div>
                 </div>
@@ -2148,7 +2166,10 @@ export default function VentasHoyClient({ data, veComision = false, veComisionVe
                       Por entregar <span style={{ color: '#F59E0B', fontWeight: 600 }}>{fPesoFull(d.entregas.revenuePorEntregar)}</span>
                     </p>
                     <p style={{ fontSize: 11, color: '#94A3B8', marginTop: 3 }}>
-                      Total (entregado + por entregar) <span style={{ color: '#CBD5E1', fontWeight: 600 }}>{fPesoFull(actual.revenue + d.entregas.revenuePorEntregar)}</span>
+                      {d.porEntrega ? 'Total (entregado + por entregar)' : 'Entregado'}{' '}
+                      <span style={{ color: '#CBD5E1', fontWeight: 600 }}>{fPesoFull(d.porEntrega
+                        ? actual.revenue + d.entregas.revenuePorEntregar
+                        : soloEntregado(actual.revenue, d.entregas.revenuePorEntregar, false))}</span>
                     </p>
                   </>
                 )}
@@ -2236,9 +2257,12 @@ export default function VentasHoyClient({ data, veComision = false, veComisionVe
             otro cálculo. Es la única puerta de entrada al detalle con
             selector Clientes/Pedidos/Productos. */}
         {(() => {
-          const litrosTotal = actual.litros + d.entregas.litrosPorEntregar
-          const revenueTotal = actual.revenue + d.entregas.revenuePorEntregar
-          const pctEntregado = litrosTotal > 0 ? (actual.litros / litrosTotal) * 100 : 0
+          const pend = d.entregas
+          const litrosTotal = conPendientes(actual.litros, pend.litrosPorEntregar, d.porEntrega)
+          const revenueTotal = conPendientes(actual.revenue, pend.revenuePorEntregar, d.porEntrega)
+          const litrosEntregados = soloEntregado(actual.litros, pend.litrosPorEntregar, d.porEntrega)
+          const revenueEntregado = soloEntregado(actual.revenue, pend.revenuePorEntregar, d.porEntrega)
+          const pctEntregado = litrosTotal > 0 ? (litrosEntregados / litrosTotal) * 100 : 0
           return (
             <button
               onClick={() => abrirDetalle('clientes', { conSelector: true, titulo: 'Venta área comercial' })}
@@ -2285,9 +2309,9 @@ export default function VentasHoyClient({ data, veComision = false, veComisionVe
                     Entregado
                   </p>
                   <p style={{ fontSize: isDesktop ? 24 : 17, fontWeight: 800, color: C.green, letterSpacing: '-0.4px', marginTop: 3, whiteSpace: 'nowrap' }}>
-                    {fL(actual.litros)}
+                    {fL(litrosEntregados)}
                   </p>
-                  <p style={{ fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{fPesoFull(actual.revenue)}</p>
+                  <p style={{ fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{fPesoFull(revenueEntregado)}</p>
                 </div>
                 <div style={isDesktop ? { minWidth: 0 } : { flex: '1 1 130px', minWidth: 0 }}>
                   <p style={{ fontSize: 11, color: C.muted, display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -2309,7 +2333,7 @@ export default function VentasHoyClient({ data, veComision = false, veComisionVe
                 <>
                   <div style={{ height: 1, background: C.line, margin: '14px 0 12px' }} />
                   <p style={{ fontSize: 11, fontWeight: 700, color: C.muted, letterSpacing: '0.04em', marginBottom: 9 }}>
-                    MIX DEL ENTREGADO
+                    {d.porEntrega ? 'MIX DEL ENTREGADO' : 'MIX DE LA VENTA'}
                   </p>
                   {([
                     { nombre: 'Cerveza',  emoji: '🍺', litros: actual.litrosCerveza,  revenue: actual.revenueCerveza,  color: C.amber },

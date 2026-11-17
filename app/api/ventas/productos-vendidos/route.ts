@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { getServerUser } from '@/lib/auth'
 import { provinciasDeRegion } from '@/lib/regiones'
 import { VENDEDORES_AREA_VENTAS_ERP } from '@/lib/types'
-import { ENTREGA_CONFIABLE_DESDE } from '@/app/ventas/hoyData'
+import { porEntregaPeriodo } from '@/app/ventas/hoyData'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,7 +33,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'desde no puede ser posterior a hasta' }, { status: 400 })
 
   const provincias = provinciasDeRegion(user.isAdmin ? null : (user.region ?? null))
-  const porEntrega = hasta >= ENTREGA_CONFIABLE_DESDE
+  const porEntrega = porEntregaPeriodo(hasta)
 
   const supabase = await createClient()
   const { data, error } = await supabase.rpc('ventas_productos_vendidos', {

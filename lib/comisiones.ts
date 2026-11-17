@@ -127,10 +127,10 @@ export interface CarteraComision {
 }
 
 /**
- * Pedidos tomados por el equipo aún sin despachar — SOLO informativo.
- * "Lo que podría tener" cuando se entregue; la comisión nunca se calcula
- * sobre esto (pedido explícito de Claudio: siempre se toma en cuenta lo
- * que se entrega a los clientes, no lo pedido).
+ * Pedidos tomados por el equipo en el período aún sin despachar — desglose
+ * informativo. Desde 17-nov-2026 YA están dentro de `ventaNeta` y de la
+ * comisión (pedido de Claudio: "si el pedido sale como pendiente igual lo
+ * sumes"; antes la comisión sólo contaba lo entregado).
  */
 export interface PorEntregarComision {
   ventaNeta: number
@@ -139,7 +139,8 @@ export interface PorEntregarComision {
 }
 
 export interface ResumenComision {
-  /** Venta neta ENTREGADA del equipo en el período — base del 1% (cláusula
+  /** Venta neta del equipo en el período por fecha de pedido (entregada +
+   *  pendiente, desde 17-nov-2026) — base del 1% (cláusula
    *  novena: "venta neta"), sin descontar por deuda vencida del cliente.
    *  Corrección 2026-08-06: la primera versión sólo comisionaba la venta de
    *  clientes sin deuda vencida ($50.168 sobre $10,86M en vez de $109.103);

@@ -68,14 +68,12 @@ export default function MiComisionVendedor({ desde, hasta, nombrePeriodo, vended
 
   const { resumen, porEntregar } = data
   const proyeccion = proyectarAlCierre(resumen.variableTotal, desde, hasta)
-  // Sólo la comisión escalonada reacciona al pipeline con la tasa actual;
-  // los bonos de apertura/recompra/cobranza/retención no se proyectan
-  // porque dependen de eventos puntuales, no de un monto continuo.
-  const tasaPromedio = resumen.ventaNeta > 0
-    ? (resumen.comision / resumen.ventaNeta)
-    : (resumen.tasaHorecaTradicional + resumen.tasaRetailDistribuidor) / 2
-  const comisionPipeline = porEntregar.ventaNeta * tasaPromedio
-  const totalConPipeline = resumen.variableTotal + comisionPipeline
+  // Desde 17-nov-2026 los pedidos pendientes de entrega YA suman a la
+  // comisión (cuenta por fecha de pedido, ver
+  // supabase/migrations/pendientes_suman_por_fecha_pedido.sql): no hay
+  // "pipeline" extra que proyectar encima, sería contarlo dos veces.
+  const comisionPipeline = 0
+  const totalConPipeline = resumen.variableTotal
 
   return (
     <>
@@ -131,7 +129,10 @@ export default function MiComisionVendedor({ desde, hasta, nombrePeriodo, vended
             <p style={{ fontSize: isDesktop ? 25 : 17, fontWeight: 800, color: '#34D399', letterSpacing: '-0.4px', marginTop: isDesktop ? 4 : 3, whiteSpace: 'nowrap' }}>
               {fComision(resumen.comision)}
             </p>
-            <p style={{ fontSize: isDesktop ? 11.5 : 10.5, color: '#94A3B8', marginTop: isDesktop ? 2 : 1 }}>de {fComision(resumen.ventaNeta)} entregado</p>
+            <p style={{ fontSize: isDesktop ? 11.5 : 10.5, color: '#94A3B8', marginTop: isDesktop ? 2 : 1 }}>
+              de {fComision(resumen.ventaNeta)} vendido
+              {porEntregar.ventaNeta > 0 && ` · incl. ${fComision(porEntregar.ventaNeta)} por entregar`}
+            </p>
           </div>
           <div style={isDesktop ? { minWidth: 0 } : { flex: '1 1 120px', minWidth: 0 }}>
             <p style={{ fontSize: isDesktop ? 12.5 : 11, color: '#94A3B8' }}>Bonos</p>
@@ -301,7 +302,7 @@ function Resumen({ resumen, cartera }: { resumen: ResumenComisionVendedor; carte
         <p style={nota}>
           {fComision(BONO_RETENCION.monto)} si al menos el {BONO_RETENCION.minimoPct}% de la
           cartera está activa (≥2 interacciones + ≥1 pedido en el período,
-          entregado dentro del mes). Las interacciones salen de las visitas en Terreno.
+          tomado dentro del período, entregado o no). Las interacciones salen de las visitas en Terreno.
         </p>
       </Bloque>
 

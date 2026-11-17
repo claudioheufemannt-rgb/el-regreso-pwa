@@ -3,14 +3,10 @@ import { createClient } from '@/lib/supabase/server'
 import { getServerUser } from '@/lib/auth'
 import { provinciasDeRegion } from '@/lib/regiones'
 import { VENDEDORES_AREA_VENTAS_ERP } from '@/lib/types'
+// Mismo criterio que /ventas: por fecha de pedido, pendientes incluidos.
+import { porEntregaPeriodo } from '@/app/ventas/hoyData'
 
 export const dynamic = 'force-dynamic'
-
-/** Mismo umbral que ventas/hoyData.ts: fecha_entrega recién existe desde el
- *  25-may-2026 (verificado contra la base). Un período que termina antes de
- *  esa fecha se calcula por fecha_pedido, igual que "Año". */
-const ENTREGA_CONFIABLE_DESDE = '2026-05-24'
-const porEntregaPeriodo = (fechaFin: string) => fechaFin >= ENTREGA_CONFIABLE_DESDE
 
 /**
  * GET /api/ventas/periodos-resumen

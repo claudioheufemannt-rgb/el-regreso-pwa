@@ -87,11 +87,11 @@ export default function MiComision({ desde, hasta, nombrePeriodo, isDesktop = fa
 
   const { resumen, porEntregar } = data
   const proyeccion = proyectarAlCierre(resumen.variableTotal, desde, hasta)
-  // Cuánto más ganarías si TODO el pipeline actual (pedidos ya tomados, aún
-  // sin despachar) se entregara — sólo la comisión, no recalcula bonos de
-  // escala/cartera porque a los volúmenes de hoy no cambian de peldaño.
-  const comisionPipeline = porEntregar.ventaNeta * TASA_COMISION
-  const totalConPipeline = resumen.variableTotal + comisionPipeline
+  // Desde 17-nov-2026 lo pendiente YA suma a la comisión (cuenta por fecha
+  // de pedido): no hay "pipeline" extra que proyectar encima — sería contarlo
+  // dos veces. `porEntregar` queda sólo como desglose informativo.
+  const comisionPipeline = 0
+  const totalConPipeline = resumen.variableTotal
 
   return (
     <>
@@ -146,9 +146,10 @@ export default function MiComision({ desde, hasta, nombrePeriodo, isDesktop = fa
 
         <div style={{ height: 1, background: 'rgba(255,255,255,.1)', margin: isDesktop ? '18px 0 16px' : '14px 0 12px' }} />
 
-        {/* Entregado vs por entregar — pedido explícito de Claudio: la
-            comisión SIEMPRE se calcula sobre lo entregado, lo por entregar es
-            sólo "lo que podría tener" cuando se despache, no cuenta todavía.
+        {/* Vendido vs por entregar — pedido de Claudio (17-nov-2026): la
+            comisión se calcula sobre lo VENDIDO por fecha de pedido, esté
+            entregado o pendiente. "Por entregar" es la parte de eso que aún
+            no se despacha (ya cuenta, se muestra para hacerle seguimiento).
             En desktop las 4 cifras (entregado, por entregar, comisión, bonos)
             van en UNA sola fila de 4 columnas — antes eran dos filas de 2,
             cada una angosta en el medio de una tarjeta enorme, dejando la
@@ -160,7 +161,7 @@ export default function MiComision({ desde, hasta, nombrePeriodo, isDesktop = fa
           // nowrap desbordaba una cifra encima de la siguiente columna.
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '18px 24px' }}>
             <div style={{ minWidth: 0 }}>
-              <p style={{ fontSize: 12.5, color: '#94A3B8' }}>Entregado</p>
+              <p style={{ fontSize: 12.5, color: '#94A3B8' }}>Vendido</p>
               <p style={{ fontSize: 25, fontWeight: 800, color: '#fff', letterSpacing: '-0.5px', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {fComision(resumen.ventaNeta)}
               </p>
@@ -171,7 +172,7 @@ export default function MiComision({ desde, hasta, nombrePeriodo, isDesktop = fa
               <p style={{ fontSize: 25, fontWeight: 800, color: '#F59E0B', letterSpacing: '-0.5px', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {fComision(porEntregar.ventaNeta)}
               </p>
-              <p style={{ fontSize: 11.5, color: '#94A3B8', marginTop: 2 }}>aún no cuenta</p>
+              <p style={{ fontSize: 11.5, color: '#94A3B8', marginTop: 2 }}>ya incluido en lo vendido</p>
             </div>
             <div style={{ minWidth: 0 }}>
               <p style={{ fontSize: 12.5, color: '#94A3B8' }}>Comisión 1%</p>
@@ -190,7 +191,7 @@ export default function MiComision({ desde, hasta, nombrePeriodo, isDesktop = fa
           <>
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
               <div style={{ flex: '1 1 120px', minWidth: 0 }}>
-                <p style={{ fontSize: 11, color: '#94A3B8' }}>Entregado</p>
+                <p style={{ fontSize: 11, color: '#94A3B8' }}>Vendido</p>
                 <p style={{ fontSize: 17, fontWeight: 800, color: '#fff', letterSpacing: '-0.4px', marginTop: 3, whiteSpace: 'nowrap' }}>
                   {fComision(resumen.ventaNeta)}
                 </p>
@@ -202,7 +203,7 @@ export default function MiComision({ desde, hasta, nombrePeriodo, isDesktop = fa
                   {fComision(porEntregar.ventaNeta)}
                 </p>
                 <p style={{ fontSize: 10.5, color: '#94A3B8', marginTop: 1 }}>
-                  aún no cuenta · {fComision(comisionPipeline)} de comisión si se entrega
+                  ya incluido en lo vendido
                 </p>
               </div>
             </div>
@@ -312,8 +313,9 @@ function HojaDetalle({ data, desde, hasta, nombrePeriodo, onClose, isDesktop: is
   const [vista, setVista] = useState<Vista>('resumen')
   const [busca, setBusca] = useState('')
   const { resumen, clientes, productos, cartera, porEntregar } = data
-  const comisionPipeline = porEntregar.ventaNeta * TASA_COMISION
-  const totalConPipeline = resumen.variableTotal + comisionPipeline
+  // Ver nota en la tarjeta: lo pendiente ya está dentro de la comisión.
+  const comisionPipeline = 0
+  const totalConPipeline = resumen.variableTotal
 
   const clientesVisibles = useMemo(() => {
     const q = busca.trim().toLowerCase()
@@ -380,15 +382,17 @@ function HojaDetalle({ data, desde, hasta, nombrePeriodo, onClose, isDesktop: is
             <p style={{ fontSize: 14, color: '#CBD5E1', marginTop: 4 }}>
               comisión + bonos por venta y cobranza
             </p>
-            <p style={{ fontSize: 14.5, color: '#F59E0B', fontWeight: 600, marginTop: 12 }}>
-              +{fComision(comisionPipeline)} si se entrega el pipeline → {fComision(totalConPipeline)} en total
-            </p>
+            {comisionPipeline > 0 && (
+              <p style={{ fontSize: 14.5, color: '#F59E0B', fontWeight: 600, marginTop: 12 }}>
+                +{fComision(comisionPipeline)} si se entrega el pipeline → {fComision(totalConPipeline)} en total
+              </p>
+            )}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 18px', marginTop: 12, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,.1)' }}>
               <span style={{ fontSize: 14, color: '#CBD5E1' }}>
-                Entregado <b style={{ color: '#fff' }}>{fComision(resumen.ventaNeta)}</b>
+                Vendido <b style={{ color: '#fff' }}>{fComision(resumen.ventaNeta)}</b>
               </span>
               <span style={{ fontSize: 14, color: '#CBD5E1' }}>
-                Por entregar <b style={{ color: '#F59E0B' }}>{fComision(porEntregar.ventaNeta)}</b>
+                De eso, por entregar <b style={{ color: '#F59E0B' }}>{fComision(porEntregar.ventaNeta)}</b>
               </span>
             </div>
           </div>
@@ -497,14 +501,14 @@ function Resumen({ resumen, cartera, porCategoria }: {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* Comisión */}
-      <Bloque titulo="COMISIÓN 1% SOBRE VENTA ENTREGADA" monto={resumen.comision} color={C.green}>
-        <Linea label="Venta neta entregada del equipo" valor={fComision(resumen.ventaNeta)} destacado />
+      <Bloque titulo="COMISIÓN 1% SOBRE VENTA DEL PERÍODO" monto={resumen.comision} color={C.green}>
+        <Linea label="Venta neta del equipo (entregada + pendiente)" valor={fComision(resumen.ventaNeta)} destacado />
         {resumen.ventaEnRiesgo > 0 && (
           <Linea label="De la cual, con deuda vencida" valor={fComision(resumen.ventaEnRiesgo)} color={C.amber} />
         )}
         <p style={nota}>
-          El 1% se calcula sobre TODA la venta neta entregada a los clientes (cláusula
-          novena). La deuda vencida no descuenta de tu comisión — queda marcada arriba
+          El 1% se calcula sobre TODA la venta neta del período (cláusula novena),
+          por fecha de pedido: los pedidos pendientes de entrega también cuentan. La deuda vencida no descuenta de tu comisión — queda marcada arriba
           sólo como alerta para que la gestiones con esos clientes.
         </p>
       </Bloque>

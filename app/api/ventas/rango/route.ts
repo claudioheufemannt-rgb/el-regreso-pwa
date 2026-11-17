@@ -92,7 +92,7 @@ export async function GET(req: NextRequest) {
           previo = {
             desde: iso(inicioAnt),
             hasta: iso(finTruncado > finAntCompleto ? finAntCompleto : finTruncado),
-            porEntrega: true,
+            porEntrega: porEntregaPeriodo(anterior.fecha_fin),
           }
           etiqueta = `vs mismos días de ${anterior.nombre}`
         } else {

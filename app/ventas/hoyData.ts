@@ -29,7 +29,17 @@ export const PERIODOS_VISIBLES = 4
 
 /** Desde esta fecha `fecha_entrega` es confiable (ver nota extensa más abajo). */
 export const ENTREGA_CONFIABLE_DESDE = '2026-05-24'
-export const porEntregaPeriodo = (fechaFin: string) => fechaFin >= ENTREGA_CONFIABLE_DESDE
+/**
+ * Pedido de Claudio (17-nov-2026): "si el pedido sale como pendiente igual lo
+ * sumes". La venta cuenta por FECHA DE PEDIDO, entregada o no, en todo
+ * /ventas (y en comisión, ver supabase/migrations/pendientes_suman_por_fecha_pedido.sql).
+ * Con esto `litros`/`revenue`/`pedidos` YA incluyen lo pendiente, y
+ * `litrosPorEntregar`/`revenuePorEntregar` son la PARTE de ese total que aún
+ * no se despacha — informativo, nunca se suma encima.
+ * Volver a `true` restaura el criterio anterior (sólo lo entregado).
+ */
+export const CONTAR_SOLO_ENTREGADO = false
+export const porEntregaPeriodo = (fechaFin: string) => CONTAR_SOLO_ENTREGADO && fechaFin >= ENTREGA_CONFIABLE_DESDE
 
 /**
  * Valores de `ventas.vendedor_actual` que NO van en el ranking de vendedores.
@@ -114,9 +124,9 @@ function armarVendedores(
     if (!n) continue
     prevAnio.set(n, (prevAnio.get(n) ?? 0) + Number(r.litros ?? 0))
   }
-  // Por fecha de PEDIDO (no de entrega): lo que este vendedor cerró en el
-  // período y todavía no se despachó. Población distinta a `litros`, que ya
-  // sólo cuenta lo entregado — se muestra aparte, no se suma al ranking.
+  // Por fecha de PEDIDO: lo que este vendedor cerró en el período y todavía
+  // no se despachó. Desde 17-nov-2026 es una PARTE de `litros` (que ya cuenta
+  // por fecha de pedido e incluye lo pendiente) — se muestra como desglose.
   const porEntregar = new Map<string, { litros: number; revenue: number }>()
   for (const r of porEntregarRows ?? []) {
     const bruto = String(r.vendedor ?? '')
@@ -260,7 +270,7 @@ export function rangoRelativo(hoy: Date, key: Exclude<RangoKey, 'periodo' | 'cus
     const dias = Math.max(1, Math.round((hasta.getTime() - desde.getTime()) / 86400000) + 1)
     const prevHasta = addDias(desde, -1)
     const prevDesde = addDias(prevHasta, -(dias - 1))
-    return { desde: iso(desde), hasta: iso(hasta), prevDesde: iso(prevDesde), prevHasta: iso(prevHasta), etiqueta, porEntrega: key !== 'anio' }
+    return { desde: iso(desde), hasta: iso(hasta), prevDesde: iso(prevDesde), prevHasta: iso(prevHasta), etiqueta, porEntrega: key !== 'anio' && porEntregaPeriodo(iso(hasta)) }
   }
   if (key === 'hoy') return relDef(hoy, hoy, 'vs ayer')
   if (key === '7d')  return relDef(addDias(hoy, -6), hoy, 'vs 7 días previos')
@@ -476,7 +486,7 @@ export async function getHoyData(
           supabase, p_prov,
           { desde: primerPeriodo.fecha_inicio, hasta: primerPeriodo.fecha_fin, porEntrega: porEntregaPeriodo(primerPeriodo.fecha_fin) },
           primerPeriodo.activo && truncadoDef
-            ? { desde: truncadoDef.desde, hasta: truncadoDef.hasta, porEntrega: true }
+            ? { desde: truncadoDef.desde, hasta: truncadoDef.hasta, porEntrega: porEntregaPeriodo(truncadoDef.hasta) }
             : periodosLista[1]
               ? { desde: periodosLista[1].fecha_inicio, hasta: periodosLista[1].fecha_fin, porEntrega: porEntregaPeriodo(periodosLista[1].fecha_fin) }
               : null,
