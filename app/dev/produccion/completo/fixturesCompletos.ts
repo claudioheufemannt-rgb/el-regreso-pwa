@@ -193,6 +193,7 @@ function propsNormales(): ProduccionProps {
       { fecha: hoyISO, producto: 'Aguas Blancas', barrilLitros: 380, lataLitros: 140 },
     ],
     mlLataPorProducto: {},
+    litrosPorCanal: [],
     esAdmin: true,
     nombreUsuario: 'Banco de pruebas',
     inicialesUsuario: 'BP',

@@ -492,7 +492,7 @@ export default async function ProduccionVista({ esAdmin, nombreUsuario, iniciale
     { data: stockSeguridadRaw }, { data: ultimoSyncStockRaw },
     { data: recetasRaw }, { data: recetaInsumosRaw }, { data: stockInsumosRaw }, { data: insumosRaw },
     { data: fermentadoresRaw }, { data: ajustesTanqueRaw },
-    { data: envaseRaw }, { data: lotesCerradosRaw },
+    { data: envaseRaw }, { data: lotesCerradosRaw }, { data: litrosPorCanalRaw },
   ] = await Promise.all([
     admin.from('forecast_validacion').select('nivel, clave, mae, mape, meses_historial, metodo'),
     admin.from('forecast_calidad_datos').select('tipo, clave, detalle, severidad, generado_at').order('generado_at', { ascending: false }),
@@ -530,6 +530,10 @@ export default async function ProduccionVista({ esAdmin, nombreUsuario, iniciale
       .in('estado', ['completado', 'cancelado'])
       .gte('actualizado_at', haceDiasISO(56, true))
       .order('actualizado_at', { ascending: false }).limit(200),
+    // Litros por tipo de cliente y ciclo (18-nov-2026), para filtrar la
+    // proyección de Demanda por canal. 37 ciclos: el peso de cada canal se
+    // calcula contra el mismo ciclo del año anterior.
+    admin.rpc('produccion_litros_por_canal_ciclo', { p_desde: haceDiasISO(37 * 31) }),
   ])
   const ultimoSyncStock = (ultimoSyncStockRaw as { creado_at?: string } | null)?.creado_at ?? null
   // Se calcula server-side (comparado contra la hora del request, no la del
@@ -1685,6 +1689,7 @@ export default async function ProduccionVista({ esAdmin, nombreUsuario, iniciale
       envase={envase}
       historialStock={historialStock}
       mlLataPorProducto={mlLataPorProducto}
+      litrosPorCanal={((litrosPorCanalRaw ?? []) as { ciclo: string; canal: string; litros: number }[]).map(r => ({ ciclo: String(r.ciclo).slice(0, 10), canal: r.canal, litros: Number(r.litros) }))}
       esAdmin={esAdmin}
       nombreUsuario={nombreUsuario}
       inicialesUsuario={inicialesUsuario}

@@ -80,6 +80,12 @@ graph TD
 - **Gantt** (`GanttProduccion.tsx`): cabecera en dos filas (qué/alertas/acciones · línea, semanas, zoom, capas); zoom "amplio" con bloques de dos líneas (producto / litros · listo d/m); "Kombucha " se omite en bloques angostos; filas "hasta cuándo alcanza" detrás del interruptor Cobertura (apagado); la cabecera de grupo fija su contenido al desplazar. Navegación: arrastrar el fondo panea (sin animación, sólo puntero fino), Ctrl/⌘ + rueda = zoom, ← → una semana con la grilla enfocada, "Hoy" vuelve el scroll al inicio.
 - **Planta**: los lotes vencidos quedan plegados en una tarjeta ("Revisar").
 
+## Demanda por tipo de cliente (18-nov-2026)
+
+- Filtro "Tipo de cliente" en Demanda: BaseCamp, PDV, HORECA, Retail, Distribuidor. Con un canal elegido el gráfico y el panel "Este ciclo" muestran ese canal con todos los productos juntos (los filtros de producto se apagan).
+- Datos: función SQL `produccion_litros_por_canal_ciclo(p_desde)` (migración del 18-nov), por fecha de pedido y ciclo 24→23. BaseCamp y PDV por nombre de cliente (PDV incluye ferias, eventos y "Cliente Directo…"); HORECA = Bar, Restaurante, Cafetería, Actividades Turísticas; Retail = Supermercado, Minimarket, Almacén, Botillería; Distribuidor = Distribuidor (rubro `ventas.categoria_negocio`, manda el primero si viene combinado). Resto → "otros" (no se ofrece; cuenta en los pesos).
+- Proyección (`lib/produccion/canales.ts`, con tests): no hay forecast por canal; se reparte el forecast consolidado según el peso del canal en el mismo ciclo del año anterior × (peso de los últimos 3 ciclos ÷ peso de esos ciclos un año antes, acotado 0,5-2), normalizado para que los canales sumen el total.
+
 ## Secciones de la UI anteriores al rediseño (histórico)
  (`ProduccionClient.tsx`)
 

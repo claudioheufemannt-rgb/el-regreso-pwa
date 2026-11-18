@@ -86,7 +86,10 @@ function tipoTitulo(s: string): string {
  *  "PIÑA1200 L" (sin espacio) también funciona. */
 export function interpretarTexto(texto: string): { producto: string; litros: number | null } {
   const limpio = texto.replace(/\s+/g, ' ').trim()
-  const m = limpio.match(/(\d[\d.]*)\s*l(?:ts?|itros)?\.?\s*$/i)
+  // El número de litros puede ir sin "L" ("Berry 1200", "Piña 1200") y con
+  // notas detrás ("PIÑA1200 L evaluar"): se toma el primer número de 3 o más
+  // cifras como los litros y lo que va antes como el producto.
+  const m = limpio.match(/(\d[\d.]{2,})\s*(?:l(?:ts?|itros)?\b\.?)?/i)
   const litros = m ? Number(m[1].replace(/\./g, '')) : null
   const nombre = (m ? limpio.slice(0, m.index) : limpio).trim()
   const alias = ALIAS_PRODUCTO[normalizarTexto(nombre)]

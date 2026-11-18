@@ -6,6 +6,7 @@ import { Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceArea,
 import { Sigma } from 'lucide-react'
 import { COLORS } from '../tema'
 import { factorDe } from '@/lib/produccion/cobertura'
+import { CANALES } from '@/lib/produccion/canales'
 import { ENVASE_LABEL, inicioDeCiclo, finDeCiclo, estaFueraDeProduccion, type EnvaseBucket } from '@/lib/produccion/reglas'
 import { fNum, fPesos, fPesosCorto, etiquetaMes, fCicloCorto, ChipDesviacion, pl } from '../compartido'
 import { Seccion, Pastillas } from './ui'
@@ -45,7 +46,28 @@ export default function TabDemanda({ p }: { p: Produccion }) {
                   opciones); el producto pasa a un selector agrupado por línea.
                   Categoría acota qué productos y formatos se ofrecen; producto
                   y formato se combinan para llegar a la serie exacta. */}
-              <div className="prod-card flex flex-wrap items-center gap-x-5 gap-y-3 px-4 py-3">
+              <div className="prod-card flex flex-col divide-y divide-(--p-line-2)">
+              {/* Tipo de cliente (18-nov-2026): con un canal elegido el gráfico
+                  muestra ese canal con todos los productos juntos, así que los
+                  filtros de producto se apagan (no hay forecast por canal y
+                  producto a la vez). */}
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
+                <span className="text-xs font-semibold text-(--p-text-3)">Tipo de cliente</span>
+                <Pastillas<string>
+                  etiqueta="Tipo de cliente"
+                  valor={p.filtroCanal}
+                  onCambiar={v => p.setFiltroCanal(v as typeof p.filtroCanal)}
+                  opciones={[{ id: 'todos', label: 'Todos' }, ...CANALES.map(c => ({ id: c.id as string, label: c.label }))]}
+                />
+                <div className="order-last ml-auto"><SelectorEscenario p={p} /></div>
+                {p.serieCanal && (
+                  <span className="text-xs text-(--p-text-3)">
+                    {CANALES.find(c => c.id === p.filtroCanal)?.ayuda}.
+                    {p.serieCanal.pesoProximo != null ? ` Se proyecta como el ${Math.round(p.serieCanal.pesoProximo * 100)}% de la venta del próximo ciclo.` : ''}
+                  </span>
+                )}
+              </div>
+              <div className={`flex flex-wrap items-center gap-x-5 gap-y-3 px-4 py-3 ${p.serieCanal ? 'pointer-events-none opacity-40' : ''}`} aria-disabled={!!p.serieCanal} inert={!!p.serieCanal}>
                 <Pastillas
                   etiqueta="Categoría"
                   valor={filtroCategoriaForecast}
@@ -80,7 +102,7 @@ export default function TabDemanda({ p }: { p: Produccion }) {
                     {productosForecastDisponibles.filter(x => !categoriaDe.has(x)).map(x => <option key={x} value={x}>{x}</option>)}
                   </select>
                 </label>
-                <div className="ml-auto"><SelectorEscenario p={p} /></div>
+              </div>
               </div>
 
               <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_272px]">
@@ -92,7 +114,7 @@ export default function TabDemanda({ p }: { p: Produccion }) {
                       {serieActual?.label ?? 'Consolidado'}: venta real y proyectada
                     </h3>
                     <p className="mt-1 text-[13px] text-(--p-text-3)">
-                      {verNeto ? 'Neto a precio de hoy' : 'Litros'} por ciclo · {serieActual?.mesesHistorial ?? chartData.filter(d => d.ventaReal != null).length} meses de historia · la franja sombreada es la temporada alta. El gráfico muestra el modelo; el escenario elegido se aplica en la tabla de abajo.
+                      {verNeto ? 'Neto a precio de hoy' : 'Litros'} por ciclo · {serieActual?.mesesHistorial ?? chartData.filter(d => d.ventaReal != null).length} meses de historia · la franja sombreada es la temporada alta. {p.serieCanal ? 'Proyección del canal: el total proyectado repartido según su peso en el mismo ciclo del año pasado, ajustado por cómo cambió ese peso los últimos 3 ciclos.' : 'El gráfico muestra el modelo; el escenario elegido se aplica en la tabla de abajo.'}
                     </p>
                     {/* La conversión a unidades sólo aparece cuando la serie elegida
                         es un producto×envase concreto (no "todos los formatos" ni un
@@ -267,7 +289,7 @@ export default function TabDemanda({ p }: { p: Produccion }) {
                         <YAxis
                           axisLine={false} tickLine={false} tick={{ fill: COLORS.eje, fontSize: 12 }} dx={-6}
                           width={verNeto ? 72 : undefined}
-                          tickFormatter={(v: number) => (verNeto ? fPesosCorto(v) : v >= 1000 ? `${Math.round(v / 1000)}k` : String(v))}
+                          tickFormatter={(v: number) => (verNeto ? fPesosCorto(v) : v >= 10000 ? `${Math.round(v / 1000)}k` : v >= 1000 ? `${(v / 1000).toLocaleString('es-CL', { maximumFractionDigits: 1 })}k` : String(Math.round(v)))}
                         />
                         {/* Tooltip a medida: en el mes ancla (el último real,
                             donde arranca la línea de proyección) "Venta Real",

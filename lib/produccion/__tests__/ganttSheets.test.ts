@@ -14,6 +14,12 @@ describe('interpretarTexto', () => {
     expect(interpretarTexto('MAQUI  1200 L')).toEqual({ producto: 'Kombucha Maqui', litros: 1200 })
     expect(interpretarTexto('LEMON 2000L')).toEqual({ producto: 'Kombucha Lemon', litros: 2000 })
   })
+  it('litros sin "L" y notas detrás del texto (planilla del 18-nov)', () => {
+    expect(interpretarTexto('Berry 1200')).toEqual({ producto: 'Kombucha Berry Menta', litros: 1200 })
+    expect(interpretarTexto('Piña 1200')).toEqual({ producto: 'Kombucha Experimental Piña Albahaca', litros: 1200 })
+    expect(interpretarTexto('PIÑA1200 L evaluar ')).toEqual({ producto: 'Kombucha Experimental Piña Albahaca', litros: 1200 })
+    expect(interpretarTexto('Lupulada')).toEqual({ producto: 'Kombucha Lupulada', litros: null })
+  })
   it('sin receta conocida conserva el nombre del Sheets', () => {
     expect(interpretarTexto('Red el growler ')).toEqual({ producto: 'Red El Growler', litros: null })
     expect(interpretarTexto('Por Definir 1200 L')).toEqual({ producto: 'Por definir', litros: 1200 })

@@ -77,6 +77,10 @@ function sincronizar() {
     if (!secret || !url) return { error: 'faltan GANTT_SECRET o GANTT_URL en las propiedades del script' }
 
     const barras = leerBarras()
+    // Red de seguridad: la app borra los lotes planificados que no vengan en
+    // la lista, así que una lectura vacía (planilla rota, hoja renombrada)
+    // NO se manda: se avisa y no se toca el plan.
+    if (barras.length === 0) return { error: 'la planilla no trae ninguna barra: no se sincronizó para no borrar el plan' }
     const resp = UrlFetchApp.fetch(url, {
       method: 'post', contentType: 'application/json', muteHttpExceptions: true,
       headers: { Authorization: 'Bearer ' + secret },
@@ -124,12 +128,28 @@ function leerBarras() {
     }
   }
 
-  const filas = sh.getRange(1, 3, sh.getLastRow(), 1).getDisplayValues().map(r => r[0])
+  // El nombre del tanque está en la columna J (la C era de una versión vieja de
+  // la planilla: con ella no se encontraba ningún tanque, se mandaban cero
+  // barras y la app borraba todo el plan). Se busca en las primeras 12
+  // columnas para no depender de un número fijo.
+  const bloque = sh.getRange(1, 1, sh.getLastRow(), Math.min(12, ultimaCol)).getDisplayValues()
   const tanqueDeFila = {}
-  filas.forEach((t, i) => {
-    const s = String(t).trim()
-    if (/^(fermentador|bright|lavoratorio)/i.test(s)) tanqueDeFila[i + 1] = s.split('(')[0].trim()
+  let filaEncabezadoKombucha = -1
+  bloque.forEach((fila, i) => {
+    for (const celda of fila) {
+      const s = String(celda).trim()
+      if (/^(fermentador|bright|lavoratorio)/i.test(s)) { tanqueDeFila[i + 1] = s.split('(')[0].trim(); break }
+      if (/^tanque kombucha/i.test(s)) { filaEncabezadoKombucha = i + 1; break }
+    }
   })
+  // La fila de K-1 viene sin nombre en la planilla (la que sigue al encabezado
+  // "TANQUE KOMBUCHA"): se le pone el nombre a mano.
+  if (filaEncabezadoKombucha > 0 && !tanqueDeFila[filaEncabezadoKombucha + 1]) {
+    tanqueDeFila[filaEncabezadoKombucha + 1] = 'Fermentador K-1'
+  }
+  if (Object.keys(tanqueDeFila).length === 0) {
+    throw new Error('no encontré ningún tanque (Fermentador / Bright / Lavoratorio) en las primeras columnas')
+  }
 
   const iso = d => d.toISOString().slice(0, 10)
   return sh.getRange(1, 1, sh.getLastRow(), ultimaCol).getMergedRanges()

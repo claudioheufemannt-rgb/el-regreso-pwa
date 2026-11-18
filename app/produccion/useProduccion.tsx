@@ -9,6 +9,7 @@ import { LINEAS_FIJAS, finDeCiclo, ciclosDe, esDiaHabilISO, LEAD_TIME_INSUMOS_SE
 
 import { calcularCobertura, aSugerencias, factorDe, type CoberturaProducto, type FactorDemanda } from '@/lib/produccion/cobertura'
 import { factorEstadistico, type NivelEscenario } from '@/lib/produccion/escenarios'
+import { CANALES, serieDeCanal, type CanalId, type LitrosCanalCiclo } from '@/lib/produccion/canales'
 import { suscribirProyeccionAbierta, leerProyeccionAbierta, MESES_CORTOS, fNum, fPesosCorto, ORDEN_ENVASE, ORDEN_FAMILIA, UNIDAD_ENVASE, hoyLocalISO, sumarDiasCalISO, restarDiasHabilesISO, diffDiasISO, demandaProyectadaEnPeriodo, etiquetaMes, indiceMes } from './compartido'
 
 export interface ProduccionProps {
@@ -57,6 +58,8 @@ export interface ProduccionProps {
   historialStock: PuntoHistorialStock[]
   /** ml de la lata de cada producto, según el inventario. */
   mlLataPorProducto: MlLataPorProducto
+  /** Litros por tipo de cliente y ciclo (función SQL produccion_litros_por_canal_ciclo). */
+  litrosPorCanal: LitrosCanalCiclo[]
   esAdmin: boolean
 }
 
@@ -78,7 +81,7 @@ export type EscenarioId = (typeof ESCENARIOS)[number]['id']
 /** Estado y cálculos del módulo Producción. Las vistas reciben el objeto entero
  *  (`p`) y toman lo que necesitan; así ninguna repite un cálculo. */
 export function useProduccion(props: ProduccionProps) {
-  const { series, calidad, planProduccion, configProductos, sugerenciasPlan, splitFermentadores, ritmoRealPorProducto, ajustesTanque: ajustesTanqueIniciales, ocupacionPlanta, stockInsumos, recetaInsumos, lotesSinReceta, stock, stockSeguridad, ultimaCorrida, minutosDesdeSyncStock, avanceMes, lotesCerrados, envase: envaseInicial, historialStock, mlLataPorProducto } = props
+  const { series, calidad, planProduccion, configProductos, sugerenciasPlan, splitFermentadores, ritmoRealPorProducto, ajustesTanque: ajustesTanqueIniciales, ocupacionPlanta, stockInsumos, recetaInsumos, lotesSinReceta, stock, stockSeguridad, ultimaCorrida, minutosDesdeSyncStock, avanceMes, lotesCerrados, envase: envaseInicial, historialStock, mlLataPorProducto, litrosPorCanal } = props
   const [activeTab, setActiveTab] = useState<TabId>('hoy')
 
   /* ── Menú lateral: ancho según el espacio real ────────────────────────
@@ -392,7 +395,25 @@ export function useProduccion(props: ProduccionProps) {
     [series, filtroProductoForecast, filtroCategoriaForecast]
   )
 
+  /** Tipo de cliente (18-nov-2026). Con un canal elegido el gráfico muestra
+   *  ese canal, todos los productos juntos: el forecast no existe por canal y
+   *  producto a la vez (ver lib/produccion/canales.ts). */
+  const [filtroCanal, setFiltroCanal] = useState<'todos' | CanalId>('todos')
+  const serieCanal = useMemo(() => {
+    if (filtroCanal === 'todos' || !serieGeneral) return null
+    const r = serieDeCanal(filtroCanal, litrosPorCanal, serieGeneral.puntos, avanceMes.mes)
+    const etiqueta = CANALES.find(c => c.id === filtroCanal)?.label ?? filtroCanal
+    return {
+      ...serieGeneral,
+      id: `canal:${filtroCanal}`, label: `Clientes ${etiqueta}`, clave: filtroCanal,
+      puntos: r.puntos.map(pt => ({ ...pt, tendencia: null, estacionalidad: null })),
+      litrosMesEnCurso: r.litrosMesEnCurso, mae: null, mape: null, mesesHistorial: r.puntos.filter(pt => pt.tipo === 'historico').length,
+      pesoProximo: r.pesoProximo,
+    }
+  }, [filtroCanal, litrosPorCanal, serieGeneral, avanceMes.mes])
+
   const serieActual = useMemo(() => {
+    if (serieCanal) return serieCanal
     if (filtroProductoForecast && filtroEnvaseForecast !== 'todos') {
       const s = series.find(s => s.nivel === 'producto_envase' && s.producto === filtroProductoForecast && s.envaseBucket === filtroEnvaseForecast)
       if (s) return s
@@ -406,7 +427,7 @@ export function useProduccion(props: ProduccionProps) {
       if (s) return s
     }
     return serieGeneral
-  }, [series, filtroProductoForecast, filtroEnvaseForecast, filtroCategoriaForecast, serieGeneral])
+  }, [series, filtroProductoForecast, filtroEnvaseForecast, filtroCategoriaForecast, serieGeneral, serieCanal])
 
   // Elegir una categoría no filtra por sí sola una serie (no existe un
   // agregado "toda la kombucha") — si el producto elegido queda fuera de la
@@ -2742,7 +2763,7 @@ export function useProduccion(props: ProduccionProps) {
     return { filas, total: filas.reduce((s, f) => s + f.total, 0) }
   }, [series, presupuestoInsumos, necesidadEnvase])
 
-  return { quitarLoteConDeshacer, deshacer, deshacerQuitar, cerrarDeshacer, series, calidad, splitFermentadores, ocupacionPlanta, stockInsumos, recetaInsumos, lotesSinReceta, stock, stockSeguridad, ultimaCorrida, minutosDesdeSyncStock, avanceMes, activeTab, setActiveTab, plan, guardandoPlan, errorPlan, setErrorPlan, mostrarFormLote, setMostrarFormLote, sugerenciaModal, setSugerenciaModal, moverLote, cambiarEstadoLote, guardarAjusteTanque, restablecerAjusteTanque, agregarLote, busquedaInsumo, panelInsumosAbierto, setPanelInsumosAbierto, mrpHorizonteDias, setMrpHorizonteDias, filtroCategoria, setFiltroCategoria, filtroEnvase, setFiltroEnvase, verModelo, setVerModelo, serieGeneral, filtroCategoriaForecast, filtroEnvaseForecast, setFiltroEnvaseForecast, filtroProductoForecast, setFiltroProductoForecast, productosForecastDisponibles, envasesForecastDisponibles, serieActual, cambiarCategoriaForecast, mtdLitros, ritmoProyectado, monedaForecast, setMonedaForecast, precioNeto, verNeto, kMoneda, fUnidad, valorSerie, unidadEnvaseSerieActual, chartData, hayDescomposicion, descomposicionProximo, curvaEstacional, ecuacionModelo, tramosTemporadaAlta, precisionSerie, envasesDisponibles, filasTablaDetalle, horizontePlanMeses, setHorizontePlanMeses, horizontePlanMax, anclasCoccion, detalleCoccion, cancelarCierrePreview, programarCierrePreview, fijarDetalle, cerrarDetalle, anclarCoccion, anclasTanque, anclarTanque, limpiarAnclas, configGantt, setConfigGantt, configAbierta, setConfigAbierta, proyeccionCargaAbierta, agregarProductoAbierto, setAgregarProductoAbierto, ajustesTanque, editarTanqueAbierto, setEditarTanqueAbierto, guardandoAjusteTanque, errorAjusteTanque, setErrorAjusteTanque, bloqueRecienMovido, arrastreStore, fantasmaRef, propsOrigenGantt, quitarBloqueGantt, planSugerido, resumenCargaMeses, confirmarNecesidad, bloquesGantt, coberturaGantt, necesidadGantt, ultimoMesForecast, fermentadoresGantt, calendarioCobertura, LEAD_COMPRA_DIAS_HABILES, setTogglesPresupuesto, setPresupuestoDesde, setPresupuestoHasta, vistaPresupuesto, setVistaPresupuesto, descargando, mesesPlan, ventanaDesde, ventanaHasta, lotesEnVentana, estaSeleccionado, alternarLote, presupuesto, descargarPresupuesto, inventarioAgrupado, alertasPorTab, stockInsumosVacio, stockInsumosFiltrado, mrpInsumos, PRESUPUESTO_MESES, presupuestoInsumos, mrpFiltrado, lotesCerrados, setHastaPlan, opcionesHorizontePlan, hastaPlanActivo, escenario, escenarios, escenarioId, setEscenarioId, factorPara, temporada, colchonesCobertura, seriesProductoEnvase, coberturaProductos, conteoCobertura, programarDesdeCobertura, cierreLote, setCierreLote, seguimientoLotes, quiebresLineasFijas, envase, guardarEnvase, errorEnvase, setErrorEnvase, necesidadEnvase, planTrimestral }
+  return { quitarLoteConDeshacer, deshacer, deshacerQuitar, cerrarDeshacer, series, calidad, splitFermentadores, ocupacionPlanta, stockInsumos, recetaInsumos, lotesSinReceta, stock, stockSeguridad, ultimaCorrida, minutosDesdeSyncStock, avanceMes, activeTab, setActiveTab, plan, guardandoPlan, errorPlan, setErrorPlan, mostrarFormLote, setMostrarFormLote, sugerenciaModal, setSugerenciaModal, moverLote, cambiarEstadoLote, guardarAjusteTanque, restablecerAjusteTanque, agregarLote, busquedaInsumo, panelInsumosAbierto, setPanelInsumosAbierto, mrpHorizonteDias, setMrpHorizonteDias, filtroCategoria, setFiltroCategoria, filtroEnvase, setFiltroEnvase, verModelo, setVerModelo, serieGeneral, filtroCategoriaForecast, filtroEnvaseForecast, setFiltroEnvaseForecast, filtroProductoForecast, setFiltroProductoForecast, productosForecastDisponibles, envasesForecastDisponibles, serieActual, cambiarCategoriaForecast, mtdLitros, ritmoProyectado, monedaForecast, setMonedaForecast, precioNeto, verNeto, kMoneda, fUnidad, valorSerie, unidadEnvaseSerieActual, chartData, hayDescomposicion, descomposicionProximo, curvaEstacional, ecuacionModelo, tramosTemporadaAlta, precisionSerie, envasesDisponibles, filasTablaDetalle, horizontePlanMeses, setHorizontePlanMeses, horizontePlanMax, anclasCoccion, detalleCoccion, cancelarCierrePreview, programarCierrePreview, fijarDetalle, cerrarDetalle, anclarCoccion, anclasTanque, anclarTanque, limpiarAnclas, configGantt, setConfigGantt, configAbierta, setConfigAbierta, proyeccionCargaAbierta, agregarProductoAbierto, setAgregarProductoAbierto, ajustesTanque, editarTanqueAbierto, setEditarTanqueAbierto, guardandoAjusteTanque, errorAjusteTanque, setErrorAjusteTanque, bloqueRecienMovido, arrastreStore, fantasmaRef, propsOrigenGantt, quitarBloqueGantt, planSugerido, resumenCargaMeses, confirmarNecesidad, bloquesGantt, coberturaGantt, necesidadGantt, ultimoMesForecast, fermentadoresGantt, calendarioCobertura, LEAD_COMPRA_DIAS_HABILES, setTogglesPresupuesto, setPresupuestoDesde, setPresupuestoHasta, vistaPresupuesto, setVistaPresupuesto, descargando, mesesPlan, ventanaDesde, ventanaHasta, lotesEnVentana, estaSeleccionado, alternarLote, presupuesto, descargarPresupuesto, inventarioAgrupado, alertasPorTab, stockInsumosVacio, stockInsumosFiltrado, mrpInsumos, PRESUPUESTO_MESES, presupuestoInsumos, mrpFiltrado, lotesCerrados, setHastaPlan, opcionesHorizontePlan, hastaPlanActivo, escenario, escenarios, escenarioId, setEscenarioId, factorPara, temporada, colchonesCobertura, seriesProductoEnvase, filtroCanal, setFiltroCanal, serieCanal, coberturaProductos, conteoCobertura, programarDesdeCobertura, cierreLote, setCierreLote, seguimientoLotes, quiebresLineasFijas, envase, guardarEnvase, errorEnvase, setErrorEnvase, necesidadEnvase, planTrimestral }
 }
 
 export type Produccion = ReturnType<typeof useProduccion>
