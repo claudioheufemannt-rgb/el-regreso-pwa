@@ -1840,6 +1840,15 @@ input[type="date"], input[type="time"], input[type="datetime-local"] {
 @media (pointer: coarse) {
   .prod-root .prod-gantt-quitar { opacity: 1; }
 }
+/* Paneo de la Gantt con el mouse (17-nov-2026): el fondo de la grilla se
+   arrastra para recorrer la carta. Sólo con puntero fino: en el teléfono el
+   dedo ya desplaza el contenedor de forma nativa. Sin animación: es
+   manipulación directa, 1:1 con el puntero. */
+@media (hover: hover) and (pointer: fine) {
+  .prod-root .prod-gantt-grilla [data-dia-calendario] { cursor: grab; }
+  .prod-root .prod-gantt-grilla[data-paneando],
+  .prod-root .prod-gantt-grilla[data-paneando] * { cursor: grabbing !important; user-select: none; }
+}
 
 /* Aviso "Deshacer": entra desde abajo, rápido (es respuesta del sistema). */
 @keyframes prod-aviso-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }

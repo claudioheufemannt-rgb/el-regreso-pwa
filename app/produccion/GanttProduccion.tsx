@@ -1,7 +1,7 @@
 'use client'
 
-import { memo, useCallback, useMemo, useRef, useState } from 'react'
-import { Settings2, AlertTriangle, ChevronLeft, ChevronRight, CalendarRange, Eye, EyeOff, X, Beaker, PackagePlus } from 'lucide-react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { Settings2, AlertTriangle, ChevronLeft, ChevronRight, Eye, X, Beaker, PackagePlus } from 'lucide-react'
 import { useEstadoArrastre, type CargaArrastre, type DestinoArrastre, type StoreArrastre } from './useArrastreCalendario'
 import FilaCobertura, { type NivelCobertura, type TramoCobertura } from './FilaCobertura'
 import type { FamiliaEnvase } from '@/lib/produccion/reglas'
@@ -152,8 +152,12 @@ const MS_DIA = 86_400_000
 const DENSIDAD = {
   compacto: { dia: 14, fila: 26, etiqueta: 10 },
   normal: { dia: 24, fila: 34, etiqueta: 11 },
+  // Amplio (17-nov-2026): bloques de dos líneas (producto / litros y fecha de
+  // listo) para leer el plan sin pasar el mouse por cada bloque.
+  amplio: { dia: 34, fila: 48, etiqueta: 12 },
 } as const
 type Zoom = keyof typeof DENSIDAD
+const ORDEN_ZOOM: Zoom[] = ['compacto', 'normal', 'amplio']
 // 168 alcanzaba de sobra para "F. T13", pero en la fila de cobertura dejaba
 // ~144px útiles para el nombre completo del producto MÁS el número de stock
 // — con nombres largos ("Kombucha Maracuyá Cardamomo") el truncado cortaba
@@ -222,6 +226,10 @@ export default function GanttProduccion({
   /** Las sugerencias del modelo se pueden apagar: al ordenar el plan estorban,
    *  y al armarlo son justamente lo que se busca. */
   const [mostrarSugerencias, setMostrarSugerencias] = useState(false)
+  /** Las filas "hasta cuándo alcanza" de cada producto: apagadas por defecto
+   *  (17-nov-2026). Mezcladas con los tanques duplicaban el alto de la carta, y
+   *  la pregunta que contestan ahora la responde "¿Cuánto producir?" en Plan. */
+  const [mostrarCobertura, setMostrarCobertura] = useState(false)
   const alternarGrupo = useCallback((titulo: string) => {
     setPlegados(p => {
       const n = new Set(p)
@@ -264,9 +272,83 @@ export default function GanttProduccion({
   const irASemana = useCallback((delta: number) => {
     setSentido(delta === 0 ? null : delta > 0 ? 'der' : 'izq')
     setOffsetSemanas(o => (delta === 0 ? 0 : o + delta))
+    // "Hoy" vuelve también el desplazamiento horizontal al inicio de la
+    // ventana (el lunes de esta semana): antes cambiaba la ventana pero el
+    // scroll quedaba donde estaba y hoy podía seguir fuera de la vista.
+    if (delta === 0) scrollRef.current?.scrollTo({ left: 0 })
   }, [])
 
   const { dia: anchoDia, fila: altoFila, etiqueta: tamEtiqueta } = DENSIDAD[zoom]
+
+  /* ── Navegación con mouse y teclado (17-nov-2026) ──
+     · Arrastrar el FONDO de la grilla la desplaza (los bloques siguen siendo
+       arrastrables: el paneo sólo arranca fuera de un bloque o un botón).
+     · Ctrl/⌘ + rueda cambia el zoom; la rueda sola sigue bajando la página
+       y Shift + rueda (o el trackpad) va de lado, como en todo navegador.
+     · Con la grilla enfocada, ← y → mueven una semana.
+     El paneo es 1:1 con el puntero y sin animación: es manipulación directa. */
+  const [paneando, setPaneando] = useState(false)
+  const paneandoRef = useRef(false)
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    let inicio: { x: number; y: number; left: number; top: number; id: number } | null = null
+    const vertical = () => el.closest<HTMLElement>('[data-autoscroll="y"]')
+    const abajo = (e: PointerEvent) => {
+      if (e.button !== 0 || e.pointerType === 'touch') return
+      const t = e.target as HTMLElement
+      if (t.closest('button, [role="button"], a, input, select, textarea')) return
+      inicio = { x: e.clientX, y: e.clientY, left: el.scrollLeft, top: vertical()?.scrollTop ?? 0, id: e.pointerId }
+    }
+    const mover = (e: PointerEvent) => {
+      if (!inicio || e.pointerId !== inicio.id) return
+      const dx = e.clientX - inicio.x, dy = e.clientY - inicio.y
+      if (!paneandoRef.current && Math.hypot(dx, dy) < 4) return // un clic no es un paneo
+      if (!paneandoRef.current) {
+        paneandoRef.current = true
+        setPaneando(true)
+        try { el.setPointerCapture(e.pointerId) } catch { /* el puntero ya no existe: se panea igual */ }
+      }
+      el.scrollLeft = inicio.left - dx
+      const v = vertical()
+      if (v) v.scrollTop = inicio.top - dy
+    }
+    const arriba = (e: PointerEvent) => {
+      if (inicio && e.pointerId === inicio.id && paneandoRef.current) {
+        paneandoRef.current = false
+        setPaneando(false)
+        if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId)
+      }
+      inicio = null
+    }
+    const rueda = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      e.preventDefault() // si no, el navegador hace zoom de la página entera
+      setZoom(z => {
+        const i = ORDEN_ZOOM.indexOf(z) + (e.deltaY < 0 ? 1 : -1)
+        return ORDEN_ZOOM[Math.max(0, Math.min(ORDEN_ZOOM.length - 1, i))]
+      })
+    }
+    el.addEventListener('pointerdown', abajo)
+    el.addEventListener('pointermove', mover)
+    el.addEventListener('pointerup', arriba)
+    el.addEventListener('pointercancel', arriba)
+    el.addEventListener('wheel', rueda, { passive: false })
+    return () => {
+      el.removeEventListener('pointerdown', abajo)
+      el.removeEventListener('pointermove', mover)
+      el.removeEventListener('pointerup', arriba)
+      el.removeEventListener('pointercancel', arriba)
+      el.removeEventListener('wheel', rueda)
+    }
+  }, [])
+  const teclaGrilla = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget) return // las teclas de un bloque enfocado son suyas
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      e.preventDefault()
+      e.currentTarget.scrollBy({ left: (e.key === 'ArrowRight' ? 7 : -7) * DENSIDAD[zoom].dia })
+    }
+  }, [zoom])
   const hoy = hoyISO()
 
   const colorPorProducto = useMemo(() => {
@@ -531,12 +613,12 @@ export default function GanttProduccion({
             </div>
             {dias.map(d => (
               <div key={d.iso} style={{ width: anchoDia, flexShrink: 0 }}
-                className={`border-l py-1 text-center text-[9px] font-semibold leading-tight ${
+                className={`border-l py-1 text-center text-[10px] font-semibold leading-tight ${
                   d.esHoy ? 'border-[#C9A227] bg-[#C9A227]/15 text-(--p-accent)'
                   : d.finde ? 'border-(--p-line) bg-(--p-line)/70 text-(--p-text-3)'
                   : 'border-(--p-line-2) text-(--p-text-3)'
                 }`}>
-                {anchoDia >= 26 && <div className="text-[8px] text-(--p-text-3)">{'LMXJVSD'[(d.dow + 6) % 7]}</div>}
+                {anchoDia >= 24 && <div className="text-[9px] font-medium text-(--p-text-4)">{'LMXJVSD'[(d.dow + 6) % 7]}</div>}
                 <div>{d.dia}</div>
               </div>
             ))}
@@ -554,113 +636,93 @@ export default function GanttProduccion({
 
   return (
     <div data-arrastrando={arrastre ? '' : undefined} className="flex flex-col overflow-hidden rounded-xl border border-(--p-line) bg-(--p-card) shadow-sm">
-      {/* ── Cabecera ─────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-(--p-line-2) bg-(--p-card) px-4 py-4 lg:px-6">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <CalendarRange size={17} className="text-(--p-accent)" />
-          <h3 className="font-bold tracking-tight text-(--p-text)">Ocupación de Fermentadores</h3>
-          <span className="rounded-full border border-(--p-line) bg-(--p-card) px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-(--p-text-3)">
-            {bloques.filter(b => b.tipo === 'confirmado').length} en plan
-            {' · '}
-            {bloques.filter(b => b.tipo === 'sugerido').length} sugeridas
-            {!mostrarSugerencias && ' (ocultas)'}
-          </span>
-          {anclasEnSesion > 0 && onLimpiarAnclas && (
-            <button type="button" onClick={onLimpiarAnclas}
-              className="prod-press flex items-center gap-1 rounded-full border border-[#C9A227] bg-[#C9A227]/10 px-2.5 py-0.5 text-[11px] font-bold text-(--p-accent) hover:bg-[#C9A227]/20"
-              title="Volver al plan que propone el modelo">
-              {anclasEnSesion} {anclasEnSesion === 1 ? 'cocción movida' : 'cocciones movidas'} — deshacer
+      {/* ── Cabecera ─────────────────────────────────────────────────────
+          Dos filas (17-nov-2026): arriba qué es y qué anda mal, con las dos
+          acciones; abajo cómo se mira (línea, semanas, zoom y qué mostrar).
+          Antes eran ocho controles en una sola fila que se partía sola. */}
+      <div className="flex flex-col gap-3 border-b border-(--p-line-2) bg-(--p-card) px-4 py-3.5 lg:px-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h3 className="text-[15px] font-bold tracking-tight text-(--p-text)">Ocupación de fermentadores</h3>
+            <span className="text-[12px] tabular-nums text-(--p-text-3)">
+              {bloques.filter(b => b.tipo === 'confirmado').length} en el plan · {bloques.filter(b => b.tipo === 'en_tanque').length} en tanque según el ERP
+              {mostrarSugerencias ? ` · ${bloques.filter(b => b.tipo === 'sugerido').length} sugeridas` : ''}
+            </span>
+            {anclasEnSesion > 0 && onLimpiarAnclas && (
+              <button type="button" onClick={onLimpiarAnclas}
+                className="prod-press flex items-center gap-1 rounded-full border border-(--p-accent-line) bg-(--p-accent-soft) px-2.5 py-0.5 text-[11px] font-bold text-(--p-accent)"
+                title="Volver al plan que propone el modelo">
+                {anclasEnSesion} {anclasEnSesion === 1 ? 'cocción movida' : 'cocciones movidas'}: deshacer
+              </button>
+            )}
+            {solapes.size > 0 && (
+              <span className="flex items-center gap-1 rounded-full border border-(--p-bad-line) bg-(--p-bad-soft) px-2 py-0.5 text-[11px] font-bold text-(--p-bad)">
+                <AlertTriangle size={12} />
+                {solapes.size / 2} choque{solapes.size / 2 === 1 ? '' : 's'} de tanque
+              </span>
+            )}
+            {noCaben > 0 && (
+              <span className="flex items-center gap-1 rounded-full border border-(--p-bad-line) bg-(--p-bad-soft) px-2 py-0.5 text-[11px] font-bold text-(--p-bad)">
+                <AlertTriangle size={12} />
+                {noCaben} no cabe{noCaben === 1 ? '' : 'n'} en su tanque
+              </span>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={onAbrirConfig}
+              className="prod-press flex items-center gap-1.5 rounded-lg border border-(--p-line) px-2.5 py-1.5 text-[12px] font-bold text-(--p-text-2) hover:bg-(--p-hover)">
+              <Settings2 size={14} />
+              Productos
             </button>
-          )}
-          {solapes.size > 0 && (
-            <span className="flex items-center gap-1 rounded-full border border-(--p-bad-line) bg-(--p-bad-soft) px-2 py-0.5 text-[10px] font-bold text-(--p-bad)">
-              <AlertTriangle size={11} />
-              {solapes.size / 2} choque{solapes.size / 2 === 1 ? '' : 's'} de tanque
-            </span>
-          )}
-          {noCaben > 0 && (
-            <span className="flex items-center gap-1 rounded-full border border-(--p-bad-line) bg-(--p-bad-soft) px-2 py-0.5 text-[10px] font-bold text-(--p-bad)">
-              <AlertTriangle size={11} />
-              {noCaben} no cabe{noCaben === 1 ? '' : 'n'} en su tanque
-            </span>
-          )}
+            {/* Crea un lote SIN tanque asignado — aparece en "sin asignar",
+                listo para arrastrarlo. */}
+            {onAgregarProducto && (
+              <button type="button" onClick={onAgregarProducto}
+                className="prod-press prod-accion flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] font-bold">
+                <PackagePlus size={14} />
+                Agregar cocción
+              </button>
+            )}
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-0.5 rounded-lg border border-(--p-line) bg-(--p-card) p-0.5">
-            {(['compacto', 'normal'] as Zoom[]).map(z => (
-              <button
-                key={z} type="button" onClick={() => setZoom(z)}
-                className={`prod-press rounded-md px-2 py-1 text-[11px] font-bold capitalize transition ${
- zoom === z ? 'prod-primario ' : 'text-(--p-text-3) hover:bg-(--p-hover)'
- }`}
-              >{z}</button>
-            ))}
-          </div>
-
-          <div className="flex items-center gap-0.5 rounded-lg border border-(--p-line) bg-(--p-card) p-0.5">
-            <button type="button" onClick={() => irASemana(-2)}
-              className="prod-press prod-hover-icon rounded-md p-1.5 text-(--p-text-3) hover:bg-(--p-hover)" title="Dos semanas atrás">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <Segmento
+            etiqueta="Línea"
+            valor={linea}
+            onCambiar={setLinea}
+            opciones={[['todas', 'Todas'], ['cerveza', 'Cerveza'], ['kombucha', 'Kombucha']]}
+          />
+          <div className="flex items-center gap-0.5 rounded-lg border border-(--p-line) p-0.5" role="group" aria-label="Semanas">
+            <button type="button" onClick={() => irASemana(-2)} aria-label="Dos semanas atrás"
+              className="prod-press rounded-md p-1.5 text-(--p-text-3) hover:bg-(--p-hover) hover:text-(--p-text)">
               <ChevronLeft size={15} />
             </button>
             <button type="button" onClick={() => irASemana(0)}
-              className="prod-press rounded-md px-2 py-1 text-[11px] font-bold text-(--p-text-2) hover:bg-(--p-hover)">
+              className="prod-press rounded-md px-2.5 py-1 text-[12px] font-bold text-(--p-text-2) hover:bg-(--p-hover)">
               Hoy
             </button>
-            <button type="button" onClick={() => irASemana(2)}
-              className="prod-press prod-hover-icon rounded-md p-1.5 text-(--p-text-3) hover:bg-(--p-hover)" title="Dos semanas adelante">
+            <button type="button" onClick={() => irASemana(2)} aria-label="Dos semanas adelante"
+              className="prod-press rounded-md p-1.5 text-(--p-text-3) hover:bg-(--p-hover) hover:text-(--p-text)">
               <ChevronRight size={15} />
             </button>
           </div>
-
-          <div className="flex items-center gap-0.5 rounded-lg border border-(--p-line) bg-(--p-card) p-0.5">
-            {([['todas', 'Todas'], ['cerveza', 'Cerveza'], ['kombucha', 'Kombucha']] as const).map(([v, etiqueta]) => (
-              <button key={v} type="button" onClick={() => setLinea(v)}
-                className={`prod-press rounded-md px-2 py-1 text-[11px] font-bold transition ${
- linea === v ? 'prod-primario ' : 'text-(--p-text-3) hover:bg-(--p-hover)'
- }`}>{etiqueta}</button>
-            ))}
-          </div>
-
-          <button type="button" onClick={() => setMostrarSugerencias(v => !v)}
-            title={mostrarSugerencias
-              ? 'Esconder lo que propone el modelo y dejar sólo el plan confirmado'
-              : 'Volver a mostrar las cocciones sugeridas'}
-            className={`prod-press flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-bold transition ${
-              mostrarSugerencias ? 'border-(--p-accent-line) bg-(--p-accent-soft) text-(--p-accent)'
-                                 : 'border-(--p-line) bg-(--p-card) text-(--p-text-3) hover:bg-(--p-hover)'
-            }`}>
-            {mostrarSugerencias ? <Eye size={14} /> : <EyeOff size={14} />}
+          <Segmento
+            etiqueta="Zoom"
+            valor={zoom}
+            onCambiar={setZoom}
+            opciones={[['compacto', 'Compacto'], ['normal', 'Normal'], ['amplio', 'Amplio']]}
+          />
+          <span className="hidden h-5 w-px bg-(--p-line) md:block" />
+          <Interruptor activo={mostrarCobertura} onCambiar={setMostrarCobertura} titulo="Mostrar hasta cuándo alcanza el stock de cada producto, sobre la misma línea de tiempo">
+            Cobertura
+          </Interruptor>
+          <Interruptor activo={mostrarSugerencias} onCambiar={setMostrarSugerencias} titulo="Mostrar las cocciones que propone el modelo">
             Sugerencias
-          </button>
-
-          <button type="button" onClick={() => setOcultarLibres(v => !v)}
-            title={ocultarLibres ? 'Mostrar todos los tanques' : 'Esconder los tanques sin carga'}
-            className={`prod-press flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-bold transition ${
-              ocultarLibres ? 'border-(--p-accent-line) bg-(--p-accent-soft) text-(--p-accent)'
-                            : 'border-(--p-line) bg-(--p-card) text-(--p-text-3) hover:bg-(--p-hover)'
-            }`}>
-            {ocultarLibres ? <EyeOff size={14} /> : <Eye size={14} />}
-            Sólo con carga
-          </button>
-
-          <button type="button" onClick={onAbrirConfig}
-            className="prod-press flex items-center gap-1.5 rounded-lg border border-(--p-line) bg-(--p-card) px-2.5 py-1.5 text-[11px] font-bold text-(--p-text-2) hover:bg-(--p-hover)">
-            <Settings2 size={14} />
-            Configurar productos
-          </button>
-
-          {/* Crea un lote SIN tanque asignado — aparece en "sin asignar",
-              listo para arrastrarlo. Separada de "Configurar productos": esa
-              edita cómo se comporta un producto que ya existe, esto agrega
-              una cocción nueva a la cola. */}
-          {onAgregarProducto && (
-            <button type="button" onClick={onAgregarProducto}
-              className="prod-press flex items-center gap-1.5 rounded-lg border border-(--p-accent-line) prod-primario px-2.5 py-1.5 text-[11px] font-bold ">
-              <PackagePlus size={14} />
-              Agregar producto
-            </button>
-          )}
+          </Interruptor>
+          <Interruptor activo={!ocultarLibres} onCambiar={v => setOcultarLibres(!v)} titulo="Mostrar también los tanques sin nada agendado">
+            Tanques libres
+          </Interruptor>
         </div>
       </div>
 
@@ -702,7 +764,15 @@ export default function GanttProduccion({
       )}
 
       {/* ── Grilla ───────────────────────────────────────────────────── */}
-      <div ref={scrollRef} className="overflow-x-auto overscroll-x-contain" data-autoscroll="x" data-autoscroll-izq={ANCHO_TANQUE}>
+      <div
+        ref={scrollRef}
+        tabIndex={0}
+        onKeyDown={teclaGrilla}
+        aria-label="Carta Gantt de fermentadores. Flechas izquierda y derecha: una semana."
+        data-paneando={paneando ? '' : undefined}
+        className="prod-gantt-grilla overflow-x-auto overscroll-x-contain focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-(--p-accent)"
+        data-autoscroll="x" data-autoscroll-izq={ANCHO_TANQUE}
+      >
         <div style={{ minWidth: ANCHO_TANQUE + anchoGrilla }}>
 
           {/* Banda de meses */}
@@ -710,7 +780,7 @@ export default function GanttProduccion({
             <div style={{ width: ANCHO_TANQUE, flexShrink: 0 }} className="sticky left-0 z-20 bg-(--p-card-2)/95 backdrop-blur" />
             {bandaMeses.map(m => (
               <div key={m.desde} style={{ width: m.cols * anchoDia, flexShrink: 0 }}
-                className="border-l border-(--p-line) px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-(--p-text-3)">
+                className="border-l border-(--p-line) px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-(--p-text-2)">
                 {m.cols * anchoDia > 70 ? m.label : ''}
               </div>
             ))}
@@ -728,12 +798,17 @@ export default function GanttProduccion({
                     resumen. Va como <button> de ancho completo y no como un
                     ícono chico — el objetivo es abrir y cerrar rápido, no
                     apuntarle a una flecha de 12 px. */}
+                {/* El botón ocupa el ancho de la grilla (más ancho que la
+                    vista), así que no puede quedar pegado a la izquierda: lo
+                    que se pega es su contenido, para que al desplazar la carta
+                    se siga leyendo "Cervecería · 10 de 17…". */}
                 <button
                   type="button"
                   onClick={() => alternarGrupo(grupo.titulo)}
-                  className="prod-press sticky left-0 z-20 flex w-full items-center gap-2 border-b border-(--p-line) bg-(--p-chip)/80 px-3 py-1.5 text-left hover:bg-(--p-hover)"
+                  className="prod-press flex w-full items-center border-b border-(--p-line) bg-(--p-chip)/80 py-1.5 text-left hover:bg-(--p-hover)"
                   style={{ width: ANCHO_TANQUE + anchoGrilla }}
                 >
+                  <span className="sticky left-0 flex items-center gap-2 px-3">
                   <ChevronRight size={13}
                     className={`shrink-0 text-(--p-text-3) transition-transform duration-200 ${plegado ? '' : 'rotate-90'}`} />
                   <span className="shrink-0 text-[10px] font-black uppercase tracking-wider text-(--p-text-2)">
@@ -770,13 +845,16 @@ export default function GanttProduccion({
                       · {grupo.libres} {grupo.libres === 1 ? 'libre' : 'libres'}
                     </span>
                   )}
+                  </span>
                 </button>
 
                 {/* Primero qué falta y para cuándo; después dónde meterlo.
                     Comparten el eje de tiempo, así que un producto cuya barra
                     muere antes del rombo de su lote se lee sin cruzar fechas. */}
-                {!plegado && grupo.cobertura.length > 0 && (
-                  <>
+                {!plegado && mostrarCobertura && grupo.cobertura.length > 0 && (
+                  // Fundido corto al prenderlas: aparecen de golpe varias filas
+                  // y la carta se corre; el fundido evita el salto (140 ms).
+                  <div className="prod-enter">
                     <div className="sticky left-0 z-10 flex items-center gap-1.5 border-b border-(--p-line-2) bg-(--p-card)/90 px-3 py-0.5 text-[9.5px] font-bold uppercase tracking-wider text-(--p-text-3)"
                       style={{ width: ANCHO_TANQUE + anchoGrilla }}>
                       Hasta cuándo alcanza
@@ -820,7 +898,7 @@ export default function GanttProduccion({
                       style={{ width: ANCHO_TANQUE + anchoGrilla }}>
                       Tanques
                     </div>
-                  </>
+                  </div>
                 )}
 
                 {!plegado && grupo.visibles.map((t, i) => (
@@ -880,7 +958,7 @@ export default function GanttProduccion({
         <span className="flex items-center gap-1"><span className="h-2 w-4 rounded-sm border border-dashed border-(--p-accent-line) bg-(--p-accent-soft)" /> sugerida</span>
         <span className="flex items-center gap-1"><span className="h-2 w-4 rounded-sm bg-(--p-text-4)" /> finde</span>
         <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-[#C9A227]" /> tanque con producto hoy</span>
-        <span className="ml-auto">Arrastra un bloque para cambiarle el día o el tanque · cerca del borde, la carta se desplaza sola · Supr quita el bloque seleccionado.</span>
+        <span className="ml-auto">Arrastra un bloque para moverlo · arrastra el fondo para recorrer la carta · Ctrl + rueda: zoom · ← →: una semana · Supr quita el bloque seleccionado.</span>
       </div>
     </div>
   )
@@ -1032,6 +1110,7 @@ const FilaTanque = memo(function FilaTanque({
               propsOrigen={propsOrigen} cargaDe={cargaDe} hoy={hoy}
               onAbrirBloque={onAbrirBloque} onQuitarBloque={onQuitarBloque}
               recienMovido={recienMovido === b.id} arrastrandoEste={arrastrandoEste}
+              dosLineas={altoFila >= 44}
             />
           )
         })}
@@ -1050,7 +1129,7 @@ const FilaTanque = memo(function FilaTanque({
  * que React no permite. */
 const BloqueCoccion = memo(function BloqueCoccion({
   bloque: b, color, choca, noCabe, capacidadTanque, desdeIdx, anchoDia, ancho,
-  propsOrigen, cargaDe, hoy, onAbrirBloque, onQuitarBloque, recienMovido, arrastrandoEste,
+  propsOrigen, cargaDe, hoy, onAbrirBloque, onQuitarBloque, recienMovido, arrastrandoEste, dosLineas = false,
 }: {
   bloque: BloqueGantt
   color: string
@@ -1067,8 +1146,14 @@ const BloqueCoccion = memo(function BloqueCoccion({
   onQuitarBloque?: (b: BloqueGantt) => void
   recienMovido: boolean
   arrastrandoEste: boolean
+  /** Zoom amplio: producto arriba, litros y fecha de listo abajo. */
+  dosLineas?: boolean
 }) {
   const sugerido = b.tipo === 'sugerido'
+  // En un bloque angosto "Kombucha " se come el nombre: la fila ya dice que es
+  // un tanque de kombucha.
+  const nombre = ancho < 150 ? b.producto.replace(/^Kombucha /, '') : b.producto
+  const listo = sumarDias(b.inicioISO, b.dias)
   // Detectado en el ERP, sin lote del plan detrás: no hay id que editar, así
   // que no se arrastra y no hay nada que "quitar" — la única acción posible
   // sería trackearlo como lote de verdad, que no es lo que este botón hace.
@@ -1130,10 +1215,19 @@ const BloqueCoccion = memo(function BloqueCoccion({
     >
       {(choca || noCabe) && <AlertTriangle size={10} className="shrink-0 text-(--p-bad)" />}
       {enTanqueErp && <Beaker size={9} className="shrink-0 opacity-80" />}
-      <span className="truncate">
-        {b.producto}
-        {ancho > 90 && ` · ${b.litros.toLocaleString('es-CL')} L`}
-      </span>
+      {dosLineas && ancho > 60 ? (
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span className="truncate text-[12px] leading-tight">{nombre}</span>
+          <span className="truncate text-[10.5px] font-semibold leading-tight opacity-80">
+            {b.litros.toLocaleString('es-CL')} L{ancho > 120 ? ` · listo ${isoADate(listo).getUTCDate()}/${isoADate(listo).getUTCMonth() + 1}` : ''}
+          </span>
+        </span>
+      ) : (
+        <span className="truncate">
+          {nombre}
+          {ancho > 90 && ` · ${b.litros.toLocaleString('es-CL')} L`}
+        </span>
+      )}
 
       {/* Quitar de la programación — sólo para lotes YA confirmados: un
           sugerido no está en el plan y uno detectado en el ERP no tiene un
@@ -1158,3 +1252,32 @@ const BloqueCoccion = memo(function BloqueCoccion({
     </button>
   )
 })
+
+/* ── Controles de la cabecera ─────────────────────────────────────────── */
+
+/** Selector de opción única en una píldora (línea, zoom). */
+function Segmento<T extends string>({ etiqueta, valor, onCambiar, opciones }: {
+  etiqueta: string; valor: T; onCambiar: (v: T) => void; opciones: readonly (readonly [T, string])[]
+}) {
+  return (
+    <div role="group" aria-label={etiqueta} className="flex items-center gap-0.5 rounded-lg border border-(--p-line) p-0.5">
+      {opciones.map(([v, texto]) => (
+        <button key={v} type="button" onClick={() => onCambiar(v)} aria-pressed={valor === v}
+          className={`prod-press rounded-md px-2.5 py-1 text-[12px] font-bold ${valor === v ? 'bg-(--p-accent-soft) text-(--p-accent)' : 'text-(--p-text-3) hover:bg-(--p-hover) hover:text-(--p-text)'}`}>
+          {texto}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/** Mostrar u ocultar una capa de la carta: interruptor con su punto de estado. */
+function Interruptor({ activo, onCambiar, titulo, children }: { activo: boolean; onCambiar: (v: boolean) => void; titulo: string; children: ReactNode }) {
+  return (
+    <button type="button" onClick={() => onCambiar(!activo)} aria-pressed={activo} title={titulo}
+      className={`prod-press flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[12px] font-bold ${activo ? 'border-(--p-accent-line) bg-(--p-accent-soft) text-(--p-accent)' : 'border-(--p-line) text-(--p-text-3) hover:bg-(--p-hover) hover:text-(--p-text)'}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${activo ? 'bg-(--p-accent)' : 'bg-(--p-text-4)'}`} />
+      {children}
+    </button>
+  )
+}

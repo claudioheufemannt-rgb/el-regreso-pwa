@@ -72,6 +72,14 @@ graph TD
 - **Hoy**: las urgencias van primero; los lotes vencidos sin confirmar se agrupan en UNA fila plegable ("18 lotes del plan sin confirmar") en vez de 18 filas antes de la primera alarma.
 - **Banco con datos reales**: `/dev/produccion/real` (sólo desarrollo). Para eso `page.tsx` quedó como control de acceso y el armado de datos pasó a `vista.tsx` (los tipos se re-exportan desde `page.tsx`).
 
+## "¿Cuánto producir?" y Gantt legible (18-nov-2026)
+
+- **`vistas/CalculadoraProduccion.tsx`** (arriba de Plan): se elige producto y "llegar al" (fin de ciclo, ciclos de temporada o una fecha). Responde en frases: cuánto hay (cámara y tanque), hasta cuándo dura **al ritmo de venta actual** (lo que va del ciclo, en días hábiles) y **con el escenario elegido**, cuánto producir por formato para llegar con el colchón (y cuánto sería al ritmo actual), cuándo empezar a cocinar y en qué fermentador(es). Botón Programar → modal de siempre. Oculta los productos fuera de producción.
+- **`lib/produccion/calculadora.ts`** (con tests): `libreDesde` (lo agendado y lo que hay en tanque según el ERP ocupa; las sugerencias no) y `recomendarLotes` (un tanque si alcanza: el que se libera antes y, a igual fecha, el más justo; si no, se parte en hasta 4 lotes; marca "tarde" si queda listo después del quiebre). Excluye bright tank y laboratorio.
+- **Motor**: "reponer bajo" sigue al escenario (colchón + (ROP − colchón) × factor del ciclo siguiente). El colchón no cambia: lo calcula el pipeline.
+- **Gantt** (`GanttProduccion.tsx`): cabecera en dos filas (qué/alertas/acciones · línea, semanas, zoom, capas); zoom "amplio" con bloques de dos líneas (producto / litros · listo d/m); "Kombucha " se omite en bloques angostos; filas "hasta cuándo alcanza" detrás del interruptor Cobertura (apagado); la cabecera de grupo fija su contenido al desplazar. Navegación: arrastrar el fondo panea (sin animación, sólo puntero fino), Ctrl/⌘ + rueda = zoom, ← → una semana con la grilla enfocada, "Hoy" vuelve el scroll al inicio.
+- **Planta**: los lotes vencidos quedan plegados en una tarjeta ("Revisar").
+
 ## Secciones de la UI anteriores al rediseño (histórico)
  (`ProduccionClient.tsx`)
 

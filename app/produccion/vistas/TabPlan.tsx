@@ -17,6 +17,7 @@ const TEXTO_GRUPO: Record<EstadoCobertura, string> = {
   sin_dato: 'No aparecen en el último informe de stock del ERP.',
 }
 import SelectorEscenario from './SelectorEscenario'
+import CalculadoraProduccion from './CalculadoraProduccion'
 import type { Produccion } from '../useProduccion'
 
 const NecesidadMensual = dynamic(() => import('../NecesidadMensual'), {
@@ -56,6 +57,8 @@ export default function TabPlan({ p }: { p: Produccion }) {
 
   return (
             <div className="prod-enter flex flex-col gap-6">
+              <CalculadoraProduccion p={p} />
+
               <Seccion
                 icono={ClipboardList}
                 titulo="Cobertura y producción por producto"

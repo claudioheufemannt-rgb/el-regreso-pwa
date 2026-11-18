@@ -275,6 +275,7 @@ export function calcularCobertura(series: SerieDemanda[], colchones: ColchonEnva
   const { hoyISO, hastaISO } = op
   const aviso = op.avisoDiasHabiles ?? 10
   const factor = op.factorDemanda ?? 1
+  const cicloSiguiente = ciclosDe(sumarDiasCalISO(finDeCiclo(avance.mes), 1))[0]
   const fin4 = sumarDiasCalISO(hoyISO, 27)
   const habiles4 = Math.max(1, diasHabilesEntre(hoyISO, fin4))
   const limiteAviso = sumarDiasHabilesISO(hoyISO, aviso)
@@ -308,7 +309,13 @@ export function calcularCobertura(series: SerieDemanda[], colchones: ColchonEnva
     const litrosBodega = g.colchones.reduce((s, c) => s + (c.stockActualLitros ?? 0), 0)
     const litrosPorUnidad = g.familia === 'barril' ? 30 : unidades && unidades > 0 && litrosBodega > 0 ? litrosBodega / unidades : null
     const ss = g.colchones.reduce((s, c) => s + c.stockSeguridadLitros, 0)
-    const rop = g.colchones.reduce((s, c) => s + c.puntoReordenLitros, 0)
+    // "Reponer bajo" = colchón + venta esperada durante la ventana de
+    // reposición. Esa venta la calculó el pipeline con el forecast tal cual,
+    // así que se escala con el escenario del ciclo que viene; el colchón (que
+    // cubre la variabilidad, no el volumen) queda igual. Sin esto el escenario
+    // movía la cobertura pero no el punto de reorden.
+    const ropModelo = g.colchones.reduce((s, c) => s + c.puntoReordenLitros, 0)
+    const rop = ss + Math.max(0, ropModelo - ss) * factorDe(factor, cicloSiguiente)
     const lead = Math.max(0, ...g.colchones.map(c => c.leadTimeSemanas))
 
     const demanda4 = g.series.reduce((s, x) => s + demandaProyectadaEnPeriodo(x, avance, hoyISO, fin4, factor), 0)
