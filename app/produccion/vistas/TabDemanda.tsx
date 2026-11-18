@@ -30,6 +30,17 @@ export default function TabDemanda({ p }: { p: Produccion }) {
     (p.filtroCategoriaForecast === 'todas' || serie.categoria === p.filtroCategoriaForecast)
     && (p.filtroEnvaseForecast === 'todos' || serie.envaseBucket === p.filtroEnvaseForecast)
     && (!p.filtroProductoForecast || serie.producto === p.filtroProductoForecast))
+  // El escenario elegido también mueve el gráfico (antes sólo la tabla):
+  // la proyección y su rango de los ciclos que vienen se multiplican por el
+  // factor de ese ciclo. La serie de un producto o formato usa el factor de su
+  // nivel; el consolidado y un canal, el de producto. El ciclo en curso y lo
+  // real no se tocan.
+  const factorGrafico = p.factorPara(p.serieActual?.nivel === 'producto_envase' ? 'producto_envase' : 'producto')
+  const datosGrafico = p.chartData.map(d => {
+    if (d.mesIso <= p.avanceMes.mes || d.ventaProyectada == null) return d
+    const f = factorDe(factorGrafico, d.mesIso)
+    return { ...d, ventaProyectada: d.ventaProyectada * f, rango: d.rango ? [d.rango[0] * f, d.rango[1] * f] : d.rango }
+  })
   const { avanceMes, verModelo, setVerModelo, filtroCategoriaForecast, filtroEnvaseForecast, setFiltroEnvaseForecast, filtroProductoForecast, setFiltroProductoForecast, productosForecastDisponibles, envasesForecastDisponibles, serieActual, cambiarCategoriaForecast, monedaForecast, setMonedaForecast, precioNeto, verNeto, kMoneda, fUnidad, valorSerie, unidadEnvaseSerieActual, chartData, hayDescomposicion, descomposicionProximo, curvaEstacional, ecuacionModelo, tramosTemporadaAlta, precisionSerie } = p
   return (
             // h-full (no min-h-full) forzaba esta columna a la altura exacta
@@ -114,7 +125,7 @@ export default function TabDemanda({ p }: { p: Produccion }) {
                       {serieActual?.label ?? 'Consolidado'}: venta real y proyectada
                     </h3>
                     <p className="mt-1 text-[13px] text-(--p-text-3)">
-                      {verNeto ? 'Neto a precio de hoy' : 'Litros'} por ciclo · {serieActual?.mesesHistorial ?? chartData.filter(d => d.ventaReal != null).length} meses de historia · la franja sombreada es la temporada alta. {p.serieCanal ? 'Proyección del canal: el total proyectado repartido según su peso en el mismo ciclo del año pasado, ajustado por cómo cambió ese peso los últimos 3 ciclos.' : 'El gráfico muestra el modelo; el escenario elegido se aplica en la tabla de abajo.'}
+                      {verNeto ? 'Neto a precio de hoy' : 'Litros'} por ciclo · {serieActual?.mesesHistorial ?? chartData.filter(d => d.ventaReal != null).length} meses de historia · la franja sombreada es la temporada alta. {p.serieCanal ? 'Proyección del canal: el total proyectado repartido según su peso en el mismo ciclo del año pasado, ajustado por cómo cambió ese peso los últimos 3 ciclos. ' : ''}La proyección sigue el escenario <strong className="text-(--p-text-2)">{nombreEscenario.toLowerCase()}</strong>{p.escenarioId === 'modelo' ? ' (el forecast tal cual)' : ''}.
                     </p>
                     {/* La conversión a unidades sólo aparece cuando la serie elegida
                         es un producto×envase concreto (no "todos los formatos" ni un
@@ -271,7 +282,7 @@ export default function TabDemanda({ p }: { p: Produccion }) {
                     </div>
                   ) : (
                     <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={chartData} margin={{ top: 20, right: 20, left: 10, bottom: 5 }}>
+                      <ComposedChart data={datosGrafico} margin={{ top: 20, right: 20, left: 10, bottom: 5 }}>
                         <defs>
                           {/* El intervalo se desvanece hacia abajo en vez de
                               ser un bloque plano: se lee como incertidumbre,
@@ -312,7 +323,7 @@ export default function TabDemanda({ p }: { p: Produccion }) {
                         <Tooltip
                           content={({ active, payload, label }) => {
                             if (!active || !payload || payload.length === 0) return null
-                            const fila = payload[0]?.payload as (typeof chartData)[number] | undefined
+                            const fila = payload[0]?.payload as (typeof datosGrafico)[number] | undefined
                             const esAncla = !!fila && fila.ventaReal != null && fila.ventaProyectada != null && fila.mesIso !== avanceMes.mes
                             const visibles = payload.filter(entrada => {
                               if (entrada.value == null) return false
