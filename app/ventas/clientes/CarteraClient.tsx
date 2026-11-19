@@ -6,8 +6,8 @@ import { useRouter } from 'next/navigation'
 import { Search, X, Download, ChevronDown, ChevronLeft, MapPin, ExternalLink, RotateCw } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import {
-  ACTIVO_DIAS, CARTERAS, CARTERA_OTROS, infoCartera,
-  type CarteraKey, type ClienteCartera, type CompraHistorial, type DetalleCliente, type EstadoCliente,
+  ACTIVO_DIAS, CARTERAS, CARTERA_OTROS, infoCartera, unidadesDe, sumarUnidades, textoUnidades,
+  type Unidades, type CarteraKey, type ClienteCartera, type CompraHistorial, type DetalleCliente, type EstadoCliente,
 } from './carteraTipos'
 
 interface Props {
@@ -754,7 +754,25 @@ function FichaCliente({ c }: { c: ClienteCartera }) {
 // ── Historial de compras: una fila por compra con sus N° de factura; al
 // tocarla se despliega lo que llevó (pedido de Claudio, 11-nov-2026).
 const COMPRAS_VISIBLES = 10
-const COLS_COMPRA = 'minmax(0, 1fr) 64px 92px 16px'
+// Cantidad = latas/barriles (lo que más importa al vendedor), litros debajo.
+const COLS_COMPRA = 'minmax(0, 1fr) 78px 84px 16px'
+
+/** Celda "Cantidad": latas/barriles en negrita y los litros chicos debajo.
+ *  Si la línea no son latas ni barriles (empaque, growler) queda sólo litros. */
+function CeldaCantidad({ u, litros, fuerte, size = 13 }: { u: Unidades; litros: number; fuerte?: boolean; size?: number }) {
+  const lineas = textoUnidades(u)
+  if (lineas.length === 0) {
+    return <span style={{ textAlign: 'right', fontSize: size, color: litros > 0 ? C.text : C.faint }}>{litros > 0 ? fLitros(litros) : '—'}</span>
+  }
+  return (
+    <span style={{ textAlign: 'right', lineHeight: 1.25 }}>
+      {lineas.map(l => (
+        <span key={l} style={{ display: 'block', fontSize: size, fontWeight: fuerte ? 800 : 700, color: C.text, whiteSpace: 'nowrap' }}>{l}</span>
+      ))}
+      <span style={{ display: 'block', fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>{fLitros(litros)}</span>
+    </span>
+  )
+}
 
 /** "Factura N° 12928" / "Facturas N° 12928 · 12930" / "Pedido N° 53363 (sin factura)". */
 function etiquetaDocs(docs: CompraHistorial['docs']): string {
@@ -788,7 +806,7 @@ function HistorialCompras({ historial }: { historial: CompraHistorial[] }) {
         borderTop: `1px solid ${C.line}`, fontSize: 10.5, fontWeight: 700, color: C.faint, textTransform: 'uppercase', letterSpacing: 0.3,
       }}>
         <span>Fecha · factura</span>
-        <span style={{ textAlign: 'right' }}>Litros</span>
+        <span style={{ textAlign: 'right' }}>Cantidad</span>
         <span style={{ textAlign: 'right' }}>Neto</span>
         <span />
       </div>
@@ -807,7 +825,7 @@ function HistorialCompras({ historial }: { historial: CompraHistorial[] }) {
                   {etiquetaDocs(compra.docs)}
                 </span>
               </span>
-              <span style={{ textAlign: 'right', fontSize: 13, color: compra.litros > 0 ? C.text : C.faint }}>{compra.litros > 0 ? fLitros(compra.litros) : '—'}</span>
+              <CeldaCantidad u={sumarUnidades(compra.docs.flatMap(d => d.items))} litros={compra.litros} fuerte />
               <span style={{ textAlign: 'right', fontSize: 13, fontWeight: 700 }}>{fPesos(compra.monto)}</span>
               <ChevronDown size={15} color={abierta ? C.blue : C.faint} style={{ transform: abierta ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
             </button>
@@ -828,7 +846,7 @@ function HistorialCompras({ historial }: { historial: CompraHistorial[] }) {
                           <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.producto ?? '—'}</span>
                           {it.envase && <span style={{ display: 'block', fontSize: 11, color: C.muted }}>{it.envase}</span>}
                         </span>
-                        <span style={{ textAlign: 'right', color: it.litros > 0 ? C.text : C.faint }}>{it.litros > 0 ? fLitros(it.litros) : '—'}</span>
+                        <CeldaCantidad u={unidadesDe(it.envase, it.litros)} litros={it.litros} size={12.5} />
                         <span style={{ textAlign: 'right' }}>{fPesos(it.monto)}</span>
                         <span />
                       </div>
@@ -839,7 +857,7 @@ function HistorialCompras({ historial }: { historial: CompraHistorial[] }) {
                         fontSize: 12.5, fontWeight: 800, color: C.text, fontVariantNumeric: 'tabular-nums',
                       }}>
                         <span>Total factura</span>
-                        <span style={{ textAlign: 'right' }}>{fLitros(doc.litros)}</span>
+                        <CeldaCantidad u={sumarUnidades(doc.items)} litros={doc.litros} fuerte size={12.5} />
                         <span style={{ textAlign: 'right' }}>{fPesos(doc.monto)}</span>
                         <span />
                       </div>

@@ -74,6 +74,42 @@ export interface DetalleCliente {
 
 export interface ItemCompra { producto: string | null; envase: string | null; litros: number; monto: number }
 
+/** Latas y barriles que representa una línea. El ERP no exporta cantidad,
+ *  sólo litros + envase: "Lata (473 ml)" 2,8 L → 6 latas; "Barril" en
+ *  múltiplos de 30 L (o de 50 L) → N barriles. Mismo criterio que
+ *  bucketEnvase (lib/produccion/reglas.ts). Growlers del PDV (1–2 L en
+ *  envase "Barril"), empaque y despacho no cuentan como unidades. */
+export interface Unidades { latas: number; barriles: number }
+
+export function unidadesDe(envase: string | null, litros: number): Unidades {
+  if (!envase || litros <= 0) return { latas: 0, barriles: 0 }
+  const ml = /^lata/i.test(envase) ? envase.match(/(\d+)\s*ml/i)?.[1] : undefined
+  if (ml) return { latas: Math.round(litros / (Number(ml) / 1000)), barriles: 0 }
+  if (/^barril/i.test(envase)) {
+    for (const tam of [30, 50]) {
+      const n = litros / tam
+      // litros llegan redondeados a 1 decimal desde la RPC
+      if (n >= 1 && Math.abs(n - Math.round(n)) < 0.01) return { latas: 0, barriles: Math.round(n) }
+    }
+  }
+  return { latas: 0, barriles: 0 }
+}
+
+export function sumarUnidades(items: { envase: string | null; litros: number }[]): Unidades {
+  return items.reduce<Unidades>((acc, it) => {
+    const u = unidadesDe(it.envase, it.litros)
+    return { latas: acc.latas + u.latas, barriles: acc.barriles + u.barriles }
+  }, { latas: 0, barriles: 0 })
+}
+
+/** ["24 latas", "2 barriles"] — vacío si la línea no son latas ni barriles. */
+export function textoUnidades(u: Unidades): string[] {
+  const out: string[] = []
+  if (u.latas > 0) out.push(`${u.latas.toLocaleString('es-CL')} ${u.latas === 1 ? 'lata' : 'latas'}`)
+  if (u.barriles > 0) out.push(`${u.barriles.toLocaleString('es-CL')} ${u.barriles === 1 ? 'barril' : 'barriles'}`)
+  return out
+}
+
 export interface CompraHistorial {
   fecha: string; litros: number; monto: number
   /** Un documento por factura; si aún no se factura, por N° de pedido. */
