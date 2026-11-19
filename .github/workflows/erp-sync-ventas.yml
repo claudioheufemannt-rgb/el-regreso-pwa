@@ -30,6 +30,12 @@ on:
         required: false
         default: 'false'
 
+# Nunca dos syncs a la vez (reloj + schedule + disparos a mano): el que llega
+# mientras otro corre espera su turno, y si ya hay uno esperando lo reemplaza.
+concurrency:
+  group: erp-sync-ventas
+  cancel-in-progress: false
+
 jobs:
   sync:
     runs-on: ubuntu-latest

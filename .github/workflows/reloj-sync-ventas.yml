@@ -1,0 +1,53 @@
+name: Reloj — sync de ventas cada 15 min
+
+# Por qué existe: el cron nativo de GitHub (schedule */15) casi no dispara
+# (2-3 veces al día) y el disparador externo de cron-job.org dejó de llegar
+# el 17-nov-2026, cuando el repo pasó a claudioheufemannt-rgb. Resultado: los
+# pedidos nuevos (incluidos los pendientes, que sí suman a Ventas y Metas)
+# tardaban horas en aparecer en la app.
+#
+# Cómo funciona: cada ejecución lanza el sync de ventas, espera 15 min y se
+# vuelve a lanzar a sí misma (workflow_dispatch con GITHUB_TOKEN sí está
+# permitido). El repo es público, así que los minutos no tienen costo.
+# El `schedule` de abajo sólo rearranca la cadena si alguna vez se corta; la
+# `concurrency` deja como máximo 1 corriendo + 1 en espera, así nunca se
+# multiplican las cadenas.
+#
+# Para pausarlo: deshabilitar este workflow en la pestaña Actions.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '7 */2 * * *'
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: reloj-sync-ventas
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Lanzar sync de ventas (07:00-23:59 hora Chile)
+        run: |
+          h=$(TZ=America/Santiago date +%-H)
+          if [ "$h" -ge 7 ]; then
+            gh workflow run erp-sync-ventas.yml -R "$GITHUB_REPOSITORY" --ref master
+            echo "Sync lanzado ($h h Chile)"
+          else
+            echo "Madrugada ($h h Chile): sin sync"
+          fi
+
+      - name: Esperar 15 min
+        run: sleep 900
+
+      - name: Encadenar el siguiente tick
+        if: always()
+        run: gh workflow run reloj-sync-ventas.yml -R "$GITHUB_REPOSITORY" --ref master
