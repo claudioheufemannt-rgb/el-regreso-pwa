@@ -50,7 +50,14 @@ export default function AporteRetail({
 
   // Acumulado sólo de lo que ya partió (las futuras inflarían la meta sin venta posible).
   // En meses, Octubre usa el 24→23 completo: igual que el resto de la pantalla.
-  const acumEq = acumular(conVenta.flatMap(f => porCorte.get(f.n) ?? []))
+  // La fila final va contra la meta del período COMPLETO (todas las semanas de la
+  // tabla, también las que no parten): Claudio, 2026-11-26 — el 35% de la S10 no
+  // es el avance del mes. La venta sí es sólo lo que ya partió.
+  const metaTabla = acumular(enTabla.flatMap(f => porCorte.get(f.n) ?? []))
+  const acumEq = {
+    ...acumular(conVenta.flatMap(f => porCorte.get(f.n) ?? [])),
+    metaNeto: metaTabla.metaNeto, metaLitros: metaTabla.metaLitros, metaClientes: metaTabla.metaClientes,
+  }
   const acumRt = sumarRetail(conVenta.map(f => f.rt))
   const desdeDe = (f: (typeof filas)[number]) => f.rt?.fechaInicio || f.ref.fechaInicio
   const hastaDe = (f: (typeof filas)[number]) => f.rt?.fechaFin || f.ref.fechaFin
@@ -115,7 +122,7 @@ export default function AporteRetail({
               desde: desdeDe(f), hasta: hastaDe(f), frase: mes ? f.ref.nombre : `la ${f.ref.corto}`,
             }))}
             total={conVenta.length > 0 ? {
-              etiqueta: 'Acum.', rango: periodoTabla?.nombre, eq: acumEq, rt: acumRt,
+              etiqueta: 'Total', rango: periodoTabla?.nombre ?? 'Temporada', eq: acumEq, rt: acumRt,
               desde: desdeDe(conVenta[0]), hasta: hastaDe(conVenta[conVenta.length - 1]),
               frase: periodoTabla ? `lo que va de ${periodoTabla.nombre}` : 'lo que va de la temporada',
             } : null}
@@ -377,7 +384,7 @@ function TarjetaSemana({ etiqueta, rango, eq, rt, total = false, abierta }: Fila
     <div className={`flex flex-col gap-2 px-2 py-3 tabular-nums md:hidden ${total ? '' : 'border-b border-[var(--cc-line-soft)]'}`}>
       <div className="flex items-start justify-between gap-3">
         <p className="min-w-0 text-[var(--cc-ink)]">
-          <span className="text-[16px] font-bold">{total ? 'Acumulado' : etiqueta}</span>
+          <span className="text-[16px] font-bold">{total ? 'Total' : etiqueta}</span>
           {rango && <span className="block text-[12px] font-medium text-[var(--cc-ink-2)]">{rango}</span>}
         </p>
         <span className="flex shrink-0 items-start gap-2">
