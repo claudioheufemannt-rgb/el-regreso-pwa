@@ -196,9 +196,9 @@ async function llamarGemini(
 
   async function carrilRespaldo() {
     await Promise.race([fallaPrincipal, dormir(PARAMETROS.arranqueRespaldoMs, fin.signal)])
-    // Además de los otros modelos, una llamada NUEVA al principal: si la primera quedó
-    // colgada en Google, otra suele volver en segundos.
-    const turnos = [...respaldos, principal]
+    // Primero una llamada NUEVA al principal (si la primera quedó colgada en Google,
+    // otra suele volver en segundos) y después los otros modelos, que tienden a colgarse.
+    const turnos = [principal, ...respaldos]
     while (quedaTiempo()) {
       for (const modelo of turnos) {
         if (!quedaTiempo()) return
