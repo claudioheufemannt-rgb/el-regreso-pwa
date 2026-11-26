@@ -78,16 +78,37 @@ function declaraciones(modoVendedor: boolean) {
   })
 }
 
-/** Primer modelo que respondió bien en este proceso: evita re-probar los que fallaron en cada pregunta. */
-let modeloVigente: string | null = null
+/** Modelos que Google rechazó para esta clave (404/403) en este proceso: no se vuelven a probar. */
+const noDisponibles = new Set<string>()
 
+const dormir = (ms: number, signal?: AbortSignal) => new Promise<void>(r => {
+  if (signal?.aborted) return r()
+  const t = setTimeout(r, ms)
+  signal?.addEventListener('abort', () => { clearTimeout(t); r() }, { once: true })
+})
+
+/**
+ * Llama a Gemini con dos "carriles" en paralelo y se queda con la primera
+ * respuesta buena (Claudio, 2026-11-26: "nunca funciona").
+ *
+ * Lo que pasaba: Flash-Lite (rápido, 3-20 s) respondía 503 "high demand" por
+ * unos segundos, se pasaba a 3.8 Flash, que se colgaba 45 s, y como hubo un
+ * timeout no se volvía a intentar Flash-Lite: error tras ~50 s sin respuesta.
+ *
+ * Ahora:
+ *  · Carril principal: el primer modelo (Flash-Lite) se reintenta con esperas
+ *    cortas (1,5 s, 3 s, 5 s, 8 s…) mientras quede presupuesto: sus 503 duran poco.
+ *  · Carril de respaldo: los demás modelos parten cuando el principal falla
+ *    por primera vez o tarda más de PARAMETROS.arranqueRespaldoMs, y también reintentan.
+ *  · Gana el primero que responda bien; las demás llamadas se cancelan.
+ */
 async function llamarGemini(
   apiKey: string, system: string, contents: ContenidoGemini[],
   opciones: { herramientas: boolean; maxTokens: number; modoVendedor?: boolean; limite?: number }
 ): Promise<{ data: RespuestaGemini; modelo: string }> {
-  const orden = modeloVigente
-    ? [modeloVigente, ...PARAMETROS.modelos.filter(m => m !== modeloVigente)]
-    : [...PARAMETROS.modelos]
+  const limite = opciones.limite ?? Date.now() + 60_000
+  const disponibles = PARAMETROS.modelos.filter(m => !noDisponibles.has(m))
+  const [principal, ...respaldos] = disponibles.length ? disponibles : PARAMETROS.modelos
 
   const pedir = (modelo: string, nivelRazonamiento: boolean, signal: AbortSignal) => fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelo)}:generateContent`,
@@ -111,59 +132,91 @@ async function llamarGemini(
     }
   )
 
-  // Estados de error de cada modelo (504 = no respondió a tiempo). Si TODOS fallaron por
-  // saturación de Google (5xx), se espera un poco y se reintenta la lista mientras quede tiempo.
+  // Se cancela al haber ganador (o error fatal): corta llamadas y esperas pendientes.
+  const fin = new AbortController()
+  // Estados de cada intento fallido (504 = no respondió a tiempo), para elegir el mensaje final.
   const estados: number[] = []
-  for (let intento = 0; intento < 3; intento++) {
-    if (intento > 0) {
-      const espera = 2000 * intento
-      if ((opciones.limite ?? Infinity) - Date.now() < espera + 8000) break
-      console.info(`[agente] Gemini saturado: reintento ${intento} en ${espera} ms`)
-      await new Promise(r => setTimeout(r, espera))
-    }
-    estados.length = 0
-    for (const modelo of orden) {
-      const t0 = Date.now()
-      const restante = Math.min(PARAMETROS.timeoutLlamadaMs, (opciones.limite ?? Infinity) - t0)
-      if (restante < 3000) break
-      // Un solo timeout cubre el reintento sin thinkingLevel y la lectura del cuerpo.
-      const signal = AbortSignal.timeout(restante)
-      let res: Response
-      try {
-        res = await pedir(modelo, true, signal)
-        if (res.status === 400 && /gemini-3/i.test(modelo)) {
-          console.error(`[agente] ${modelo} rechazó thinkingLevel (400): se reintenta sin él`, (await res.text().catch(() => '')).slice(0, 300))
-          res = await pedir(modelo, false, signal)
-        }
-        if (res.ok) {
-          const data = await res.json() as RespuestaGemini
-          modeloVigente = modelo
-          console.info(`[agente] ${modelo} respondió en ${Date.now() - t0} ms`)
-          return { data, modelo }
-        }
-      } catch (e) {
-        if (!esTimeout(e)) throw e
-        console.error(`[agente] ${modelo} no respondió en ${Date.now() - t0} ms: se prueba el siguiente`)
-        // Si era el vigente, la próxima pregunta parte por otro modelo en vez de volver a esperarlo.
-        if (modeloVigente === modelo) modeloVigente = null
-        estados.push(504)
-        continue
+  let fatal: ErrorAgente | null = null
+  let ganador: { data: RespuestaGemini; modelo: string } | null = null
+
+  /** Un intento contra un modelo. true = ganó; false = falló de forma reintentable. */
+  async function intentar(modelo: string): Promise<boolean> {
+    const t0 = Date.now()
+    const restante = Math.min(PARAMETROS.timeoutLlamadaMs, limite - t0)
+    if (restante < 3000 || fin.signal.aborted) return false
+    // Un solo timeout cubre el reintento sin thinkingLevel y la lectura del cuerpo.
+    const signal = AbortSignal.any([fin.signal, AbortSignal.timeout(restante)])
+    let res: Response
+    try {
+      res = await pedir(modelo, true, signal)
+      if (res.status === 400 && /gemini-3/i.test(modelo)) {
+        console.error(`[agente] ${modelo} rechazó thinkingLevel (400): se reintenta sin él`, (await res.text().catch(() => '')).slice(0, 300))
+        res = await pedir(modelo, false, signal)
       }
-      estados.push(res.status)
-      const detalle = await res.text().catch(() => '')
-      console.error(`[agente] Gemini ${modelo} respondió ${res.status} tras ${Date.now() - t0} ms`, detalle.slice(0, 200))
-      // Modelo no disponible para la clave (404), cuota agotada de ESE modelo (429),
-      // permiso (403) o saturación (5xx): se prueba el siguiente de la lista.
-      if ([403, 404, 429, 500, 502, 503].includes(res.status)) continue
-      throw new ErrorAgente('Gemini rechazó la solicitud. Revisa los registros del servidor.', 502)
+      if (res.ok) {
+        const data = await res.json() as RespuestaGemini
+        if (fin.signal.aborted) return false
+        ganador = { data, modelo }
+        console.info(`[agente] ${modelo} respondió en ${Date.now() - t0} ms`)
+        fin.abort()
+        return true
+      }
+    } catch (e) {
+      if (fin.signal.aborted) return false
+      if (!esTimeout(e)) { fatal ??= e instanceof ErrorAgente ? e : new ErrorAgente('El servicio de IA no respondió. Intenta de nuevo.', 502); fin.abort(); return false }
+      console.error(`[agente] ${modelo} no respondió en ${Date.now() - t0} ms`)
+      estados.push(504)
+      return false
     }
-    const saturado = estados.length > 0 && estados.every(e => e >= 500 && e !== 504)
-    if (!saturado) break
+    estados.push(res.status)
+    const detalle = await res.text().catch(() => '')
+    console.error(`[agente] Gemini ${modelo} respondió ${res.status} tras ${Date.now() - t0} ms`, detalle.slice(0, 200))
+    // Modelo no disponible para la clave: no se insiste con él en este proceso.
+    if (res.status === 404 || res.status === 403) { noDisponibles.add(modelo); return false }
+    // Cuota agotada de ESE modelo (429) o saturación (5xx): reintentable.
+    if ([429, 500, 502, 503].includes(res.status)) return false
+    fatal ??= new ErrorAgente('Gemini rechazó la solicitud. Revisa los registros del servidor.', 502)
+    fin.abort()
+    return false
   }
 
+  const quedaTiempo = () => !fin.signal.aborted && limite - Date.now() >= 3000
+  let avisarFallaPrincipal: () => void = () => {}
+  const fallaPrincipal = new Promise<void>(r => { avisarFallaPrincipal = r })
+
+  async function carrilPrincipal() {
+    const esperas = [1500, 3000, 5000, 8000]
+    for (let i = 0; quedaTiempo(); i++) {
+      if (await intentar(principal)) return
+      avisarFallaPrincipal()
+      if (noDisponibles.has(principal)) return
+      await dormir(esperas[Math.min(i, esperas.length - 1)], fin.signal)
+    }
+  }
+
+  async function carrilRespaldo() {
+    await Promise.race([fallaPrincipal, dormir(PARAMETROS.arranqueRespaldoMs, fin.signal)])
+    // Además de los otros modelos, una llamada NUEVA al principal: si la primera quedó
+    // colgada en Google, otra suele volver en segundos.
+    const turnos = [...respaldos, principal]
+    while (quedaTiempo()) {
+      for (const modelo of turnos) {
+        if (!quedaTiempo()) return
+        if (noDisponibles.has(modelo)) continue
+        if (await intentar(modelo)) return
+      }
+      if (turnos.every(m => noDisponibles.has(m))) return
+      await dormir(3000, fin.signal)
+    }
+  }
+
+  await Promise.all([carrilPrincipal(), carrilRespaldo()])
+  if (ganador) return ganador
+  if (fatal) throw fatal
+
   // El mensaje sigue la causa más útil para el usuario, no la del último modelo probado.
+  if (estados.some(e => e >= 500 && e !== 504)) throw new ErrorAgente('Gemini (Google) está saturado en este momento. Intenta de nuevo en un minuto.', 503)
   if (estados.length === 0 || estados.includes(504)) throw errorTiempo()
-  if (estados.some(e => e >= 500)) throw new ErrorAgente('Gemini (Google) está saturado en este momento. Intenta de nuevo en un minuto.', 503)
   if (estados.includes(429)) throw new ErrorAgente('Se agotó la cuota gratuita de Gemini por ahora. Intenta de nuevo en un minuto.', 429)
   if (estados.includes(403)) throw new ErrorAgente('Gemini no aceptó la clave. Revisa que GEMINI_API_KEY sea válida y esté habilitada.', 502)
   if (estados.every(e => e === 404)) throw new ErrorAgente('Ninguno de los modelos de Gemini configurados está disponible para esta clave (ver lib/agente/sistema.ts).', 502)

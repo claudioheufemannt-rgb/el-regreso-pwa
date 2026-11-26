@@ -37,8 +37,10 @@ export const PARAMETROS = {
   maxRondasHerramientas: 6,
   /** Tiempo total para contestar una pregunta. Bajo el maxDuration (120 s) de /api/agente para alcanzar a guardar y avisar en vez de que Vercel corte sin respuesta. */
   presupuestoMs: 105_000,
-  /** Tope por llamada a Gemini: si un modelo se cuelga se pasa al siguiente. */
-  timeoutLlamadaMs: 45_000,
+  /** Tope por llamada a Gemini: si una llamada se cuelga se reintenta (ver llamarGemini). Flash-Lite suele responder en 3-20 s; pasado esto la llamada se da por colgada. */
+  timeoutLlamadaMs: 40_000,
+  /** Si el modelo principal no ha respondido en este tiempo (o falla antes), se lanza en paralelo el de respaldo y gana el primero. */
+  arranqueRespaldoMs: 12_000,
   /** Al acumular tantos mensajes sin resumir, se condensan los viejos en `resumen` (el texto completo queda guardado en la base). Lo no resumido viaja literal al modelo. */
   umbralResumen: 12,
   /** Cuántos mensajes recientes se conservan literales tras resumir. */
