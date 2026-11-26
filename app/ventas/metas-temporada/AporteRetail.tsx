@@ -1,11 +1,13 @@
 'use client'
 
-import { Lock, Store } from 'lucide-react'
+import { useState } from 'react'
+import { ChevronDown, Lock, Store } from 'lucide-react'
 import {
   type Acumulado, type FilaMeta, type Escala, type RetailCorte,
   clp, litros, pct, pctTxt, acumular, nivelPorPct, rangoFechas, periodoComercial, NIVEL_COLOR, NIVEL_BARRA,
 } from './tipos'
 import { Barra, PctNivel, PorEntregar, Titulo, ORO } from './ui'
+import { ClientesDelCorte } from './DetalleClientes'
 
 /**
  * Aporte del Retail a las metas — SÓLO gerencia (pedido de Claudio, 2026-11-04).
@@ -35,23 +37,23 @@ export default function AporteRetail({
   const filas = [...porCorte.entries()]
     .map(([n, fs]) => ({ n, ref: fs[0], eq: acumular(fs), rt: retailPor.get(n) ?? null }))
     .sort((a, b) => a.n - b.n)
-  const transcurridas = filas.filter(f => f.ref.estado !== 'futura')
   const actual = filas.find(f => f.n === elegido) ?? null
   const mes = escala === 'periodo'
 
-  // Tabla (pedido de Claudio, 2026-11-10): en semanas sólo las del período 24→23
-  // de la semana elegida — lo que se mira es el mes en curso, no la temporada —
-  // y en ambas escalas se saca todo corte sin venta (ni equipo ni Retail), como
-  // un 24–25 oct en fin de semana: no aporta nada verlo. La elegida queda siempre.
+  // Tabla: en semanas sólo las del período 24→23 de la semana elegida — lo que se
+  // mira es el mes en curso, no la temporada (Claudio, 2026-11-10). Desde
+  // 2026-11-26 van TODAS las semanas (o meses) hasta el fin del período, también
+  // las que no parten, con su meta: así se ve lo que queda por delante.
   const periodoTabla = !mes && actual ? periodoComercial(actual.ref.fechaInicio) : null
-  const enTabla = transcurridas.filter(f =>
-    (!periodoTabla || periodoComercial(f.ref.fechaInicio).clave === periodoTabla.clave) &&
-    (f.n === elegido || f.eq.realNeto + (f.rt?.neto ?? 0) > 0),
-  )
+  const enTabla = filas.filter(f => !periodoTabla || periodoComercial(f.ref.fechaInicio).clave === periodoTabla.clave)
+  const conVenta = enTabla.filter(f => f.ref.estado !== 'futura')
 
-  // Acumulado de lo que se ve en la tabla (en meses, Octubre usa el 24→23 completo: igual que el resto de la pantalla).
-  const acumEq = acumular(enTabla.flatMap(f => porCorte.get(f.n) ?? []))
-  const acumRt = sumarRetail(enTabla.map(f => f.rt))
+  // Acumulado sólo de lo que ya partió (las futuras inflarían la meta sin venta posible).
+  // En meses, Octubre usa el 24→23 completo: igual que el resto de la pantalla.
+  const acumEq = acumular(conVenta.flatMap(f => porCorte.get(f.n) ?? []))
+  const acumRt = sumarRetail(conVenta.map(f => f.rt))
+  const desdeDe = (f: (typeof filas)[number]) => f.rt?.fechaInicio || f.ref.fechaInicio
+  const hastaDe = (f: (typeof filas)[number]) => f.rt?.fechaFin || f.ref.fechaFin
 
   // Meta del período completo (pedido de Claudio, 2026-11-10): todas sus semanas,
   // también las que no parten. Ninguna semana cruza el 23/24, así que la suma calza.
@@ -109,9 +111,14 @@ export default function AporteRetail({
           <Tabla
             filas={enTabla.map(f => ({
               clave: f.n, etiqueta: f.ref.corto, rango: rangoFechas(f.ref.fechaInicio, f.ref.fechaFin),
-              eq: f.eq, rt: f.rt, marcada: f.n === elegido,
+              eq: f.eq, rt: f.rt, marcada: f.n === elegido, futura: f.ref.estado === 'futura',
+              desde: desdeDe(f), hasta: hastaDe(f), frase: mes ? f.ref.nombre : `la ${f.ref.corto}`,
             }))}
-            total={{ etiqueta: 'Acum.', rango: periodoTabla?.nombre, eq: acumEq, rt: acumRt }}
+            total={conVenta.length > 0 ? {
+              etiqueta: 'Acum.', rango: periodoTabla?.nombre, eq: acumEq, rt: acumRt,
+              desde: desdeDe(conVenta[0]), hasta: hastaDe(conVenta[conVenta.length - 1]),
+              frase: periodoTabla ? `lo que va de ${periodoTabla.nombre}` : 'lo que va de la temporada',
+            } : null}
           />
           {periodoTabla && metaPeriodo && (
             <MetaPeriodo
@@ -237,25 +244,119 @@ function Leyenda() {
 // 1ª columna: "S1" + su rango de fechas debajo (puede partir en dos líneas: "27 oct –" / "2 nov").
 // Escritorio: Meta y al lado Equipo + Retail (pedido de Claudio, 2026-11-10). En móvil
 // esa suma va bajo el % de la última columna.
-const COLS = 'grid-cols-[58px_minmax(0,1fr)_minmax(0,1fr)_78px] md:grid-cols-[92px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_76px_72px_minmax(0,1.2fr)]'
+const COLS = 'grid-cols-[58px_minmax(0,1fr)_minmax(0,1fr)_78px] md:grid-cols-[92px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_76px_72px_minmax(0,1.2fr)_20px]'
 
-interface FilaTabla { clave: number; etiqueta: string; rango?: string; eq: Acumulado; rt: RetailCorte | null; marcada: boolean }
+interface FilaTabla {
+  clave: number
+  etiqueta: string
+  rango?: string
+  eq: Acumulado
+  rt: RetailCorte | null
+  marcada: boolean
+  /** Todavía no parte: se muestra sólo su meta y no se despliega. */
+  futura?: boolean
+  /** Fechas con que se piden los clientes del Retail al desplegar. */
+  desde: string
+  hasta: string
+  /** Cómo se nombra dentro de una frase: "la S10", "Noviembre". */
+  frase: string
+}
+type TotalTabla = Omit<FilaTabla, 'clave' | 'marcada'>
 
-function Tabla({ filas, total }: { filas: FilaTabla[]; total: { etiqueta: string; rango?: string; eq: Acumulado; rt: RetailCorte | null } }) {
+const CLAVE_TOTAL = -1
+
+/**
+ * Al tocar una semana (o el Acum.) se despliegan los clientes del Retail en ese
+ * corte y, al tocar un cliente, lo que compró — igual que al tocar una región en
+ * "Ranking por vendedor" (pedido de Claudio, 2026-11-26).
+ */
+function Tabla({ filas, total }: { filas: FilaTabla[]; total: TotalTabla | null }) {
+  const [abierto, setAbierto] = useState<number | null>(null)
+  const alternar = (clave: number) => setAbierto(abierto === clave ? null : clave)
+  const todas: (FilaTabla & { total?: boolean })[] = [
+    ...filas,
+    ...(total ? [{ ...total, clave: CLAVE_TOTAL, marcada: false, total: true }] : []),
+  ]
+  return (
+    <div>
+      <div className={`hidden ${COLS} gap-x-3 border-b border-[var(--cc-line)] pb-1.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--cc-ink-3)] md:grid`}>
+        <span />
+        <span>Meta</span>
+        <span>Equipo + Retail</span>
+        <span>Equipo</span>
+        <span>Retail</span>
+        <span>% Equipo</span>
+        <span>Aporte</span>
+        <span>Con Retail</span>
+        <span />
+      </div>
+      {todas.map(f => {
+        const abierta = abierto === f.clave
+        return (
+          <div key={f.clave} className={f.total ? 'mt-1 border-t-2 border-[var(--cc-line)] md:mt-0 md:border-t' : ''}>
+            {f.futura ? (
+              <FilaFutura {...f} />
+            ) : (
+              <button
+                type="button"
+                onClick={() => alternar(f.clave)}
+                aria-expanded={abierta}
+                aria-label={`${abierta ? 'Ocultar' : 'Ver'} ventas del Retail en ${f.frase}`}
+                className={`block w-full text-left transition-colors hover:bg-[var(--cc-card)] ${
+                  f.marcada || abierta ? 'bg-[var(--cc-gold-soft)] hover:bg-[var(--cc-gold-soft)]' : ''
+                }`}
+              >
+                <TarjetaSemana {...f} abierta={abierta} />
+                <Linea {...f} abierta={abierta} />
+              </button>
+            )}
+            {abierta && (
+              <div className="border-b border-[var(--cc-line-soft)] px-1 pb-3 pt-2 md:px-3">
+                <ClientesDelCorte retail userId="" desde={f.desde} hasta={f.hasta} nombre={f.frase} />
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Semana que todavía no parte: sólo su meta, apagada. */
+function FilaFutura({ etiqueta, rango, eq }: FilaTabla) {
   return (
     <>
-      {/* Móvil: una tarjeta por semana con las 8 columnas de escritorio (antes se cortaban con "…"). */}
-      <div className="flex flex-col md:hidden">
-        {filas.map(f => <TarjetaSemana key={f.clave} {...f} />)}
-        <TarjetaSemana clave={-1} etiqueta={total.etiqueta} rango={total.rango} eq={total.eq} rt={total.rt} marcada={false} total />
+      {/* Móvil */}
+      <div className="flex items-center justify-between gap-3 border-b border-[var(--cc-line-soft)] py-2.5 tabular-nums md:hidden">
+        <p className="min-w-0 text-[var(--cc-ink-2)]">
+          <span className="text-[15px] font-bold">{etiqueta}</span>
+          {rango && <span className="block text-[12px] font-medium text-[var(--cc-ink-3)]">{rango}</span>}
+        </p>
+        <p className="flex shrink-0 flex-col items-end leading-tight">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--cc-ink-3)]">Meta · por venir</span>
+          <span className="text-[15px] font-semibold text-[var(--cc-ink-2)]">{clp(eq.metaNeto)}</span>
+          <span className="text-[12px] font-medium text-[var(--cc-ink-3)]">{litros(eq.metaLitros)} L</span>
+        </p>
       </div>
-      <TablaEscritorio filas={filas} total={total} />
+      {/* Escritorio */}
+      <div className={`hidden ${COLS} min-h-[44px] items-center gap-x-3 border-b border-[var(--cc-line-soft)] py-1.5 text-[13px] tabular-nums md:grid`}>
+        <span className="flex min-w-0 flex-col pl-1">
+          <span className="font-bold text-[var(--cc-ink-2)]">{etiqueta}</span>
+          {rango && <span className="text-[11px] font-medium leading-tight text-[var(--cc-ink-3)]">{rango}</span>}
+        </span>
+        <span className="flex min-w-0 flex-col">
+          <span className="truncate font-medium text-[var(--cc-ink-2)]">{clp(eq.metaNeto)}</span>
+          <span className="truncate text-[12px] font-medium text-[var(--cc-ink-3)]">{litros(eq.metaLitros)} L</span>
+        </span>
+        <span className="col-span-6 text-[12px] font-medium italic text-[var(--cc-ink-3)]">Por venir</span>
+        <span />
+      </div>
     </>
   )
 }
 
 /**
- *  S6  2–8 nov                          107%
+ *  S6  2–8 nov                          107%  ⌄
  *                                  con Retail
  *  ▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬
  *  EQUIPO              RETAIL
@@ -264,7 +365,7 @@ function Tabla({ filas, total }: { filas: FilaTabla[]; total: { etiqueta: string
  *  META                EQUIPO + RETAIL
  *  $10.530.000         $11.354.298 · 2.854,3 L
  */
-function TarjetaSemana({ etiqueta, rango, eq, rt, marcada, total = false }: FilaTabla & { total?: boolean }) {
+function TarjetaSemana({ etiqueta, rango, eq, rt, total = false, abierta }: FilaTabla & { total?: boolean; abierta: boolean }) {
   const rNeto = rt?.neto ?? 0
   const rLitros = rt?.litros ?? 0
   const pEq = pct(eq.realNeto, eq.metaNeto)
@@ -273,20 +374,19 @@ function TarjetaSemana({ etiqueta, rango, eq, rt, marcada, total = false }: Fila
   const monto = 'text-[15px] font-bold text-[var(--cc-ink)]'
   const sub = 'text-[12px] font-medium text-[var(--cc-ink-2)]'
   return (
-    <div
-      className={`-mx-2 flex flex-col gap-2 rounded-[10px] px-2 py-3 tabular-nums ${
-        total ? 'mt-1 border-t-2 border-[var(--cc-line)]' : 'border-b border-[var(--cc-line-soft)]'
-      } ${marcada ? 'bg-[var(--cc-gold-soft)]' : ''}`}
-    >
+    <div className={`flex flex-col gap-2 px-2 py-3 tabular-nums md:hidden ${total ? '' : 'border-b border-[var(--cc-line-soft)]'}`}>
       <div className="flex items-start justify-between gap-3">
         <p className="min-w-0 text-[var(--cc-ink)]">
           <span className="text-[16px] font-bold">{total ? 'Acumulado' : etiqueta}</span>
           {rango && <span className="block text-[12px] font-medium text-[var(--cc-ink-2)]">{rango}</span>}
         </p>
-        <p className="flex shrink-0 flex-col items-end leading-tight">
-          <PctNivel valor={pTotal} className="text-[20px]" />
-          <span className={sub}>con Retail</span>
-        </p>
+        <span className="flex shrink-0 items-start gap-2">
+          <span className="flex flex-col items-end leading-tight">
+            <PctNivel valor={pTotal} className="text-[20px]" />
+            <span className={sub}>con Retail</span>
+          </span>
+          <ChevronDown size={18} className={`mt-1 text-[var(--cc-ink-2)] transition-transform duration-200 ${abierta ? 'rotate-180' : ''}`} />
+        </span>
       </div>
       <BarraDoble equipo={pEq} total={pTotal} alto={6} />
       <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
@@ -317,68 +417,40 @@ function TarjetaSemana({ etiqueta, rango, eq, rt, marcada, total = false }: Fila
   )
 }
 
-function TablaEscritorio({ filas, total }: { filas: FilaTabla[]; total: { etiqueta: string; rango?: string; eq: Acumulado; rt: RetailCorte | null } }) {
-  return (
-    <div className="hidden md:block">
-      <div className={`grid ${COLS} gap-x-3 border-b border-[var(--cc-line)] pb-1.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--cc-ink-3)]`}>
-        <span />
-        <span className="hidden md:block">Meta</span>
-        <span className="hidden md:block">Equipo + Retail</span>
-        <span>Equipo</span>
-        <span>Retail</span>
-        <span className="hidden md:block">% Equipo</span>
-        <span className="hidden md:block">Aporte</span>
-        <span className="text-right md:text-left">Con Retail</span>
-      </div>
-      {filas.map(f => <Linea key={f.clave} {...f} />)}
-      <Linea clave={-1} etiqueta={total.etiqueta} rango={total.rango} eq={total.eq} rt={total.rt} marcada={false} total />
-    </div>
-  )
-}
-
-function Linea({ etiqueta, rango, eq, rt, marcada, total = false }: FilaTabla & { total?: boolean }) {
+function Linea({ etiqueta, rango, eq, rt, marcada, total = false, abierta }: FilaTabla & { total?: boolean; abierta: boolean }) {
   const rNeto = rt?.neto ?? 0
   const pEq = pct(eq.realNeto, eq.metaNeto)
   const pTotal = pct(eq.realNeto + rNeto, eq.metaNeto)
   return (
     <div
-      className={`grid ${COLS} min-h-[44px] items-center gap-x-3 border-b border-[var(--cc-line-soft)] py-1.5 text-[13px] tabular-nums ${
-        total ? 'border-t border-t-[var(--cc-line)] font-bold' : ''
-      } ${marcada ? 'bg-[var(--cc-gold-soft)]' : ''}`}
+      className={`hidden ${COLS} min-h-[44px] items-center gap-x-3 border-b border-[var(--cc-line-soft)] py-1.5 text-[13px] tabular-nums md:grid ${
+        total ? 'font-bold' : ''
+      }`}
     >
       <span className="flex min-w-0 flex-col pl-1">
-        <span className={`font-bold ${marcada || total ? 'text-[var(--cc-ink)]' : 'text-[var(--cc-ink-2)]'}`}>{etiqueta}</span>
+        <span className={`font-bold ${marcada || total || abierta ? 'text-[var(--cc-ink)]' : 'text-[var(--cc-ink-2)]'}`}>{etiqueta}</span>
         {rango && <span className="text-[11px] font-medium leading-tight text-[var(--cc-ink-3)]">{rango}</span>}
       </span>
-      <span className="hidden truncate font-medium text-[var(--cc-ink-2)] md:block">{clp(eq.metaNeto)}</span>
-      <span className="hidden min-w-0 flex-col md:flex">
+      <span className="truncate font-medium text-[var(--cc-ink-2)]">{clp(eq.metaNeto)}</span>
+      <span className="flex min-w-0 flex-col">
         <span className="truncate font-bold text-[var(--cc-ink)]">{clp(eq.realNeto + rNeto)}</span>
         <span className="truncate text-[12px] font-medium text-[var(--cc-ink-2)]">{litros(eq.realLitros + (rt?.litros ?? 0))} L</span>
       </span>
       <span className="flex min-w-0 flex-col">
         <span className="truncate font-bold text-[var(--cc-ink)]">{clp(eq.realNeto)}</span>
-        <span className="truncate text-[12px] font-medium text-[var(--cc-ink-2)]">
-          <span className="hidden md:inline">{litros(eq.realLitros)} L</span>
-          <span className="md:hidden">de {clp(eq.metaNeto)}</span>
-        </span>
+        <span className="truncate text-[12px] font-medium text-[var(--cc-ink-2)]">{litros(eq.realLitros)} L</span>
       </span>
       <span className="flex min-w-0 flex-col">
         <span className="truncate font-bold text-[var(--cc-ink)]">{clp(rNeto)}</span>
-        <span className="truncate text-[12px] font-medium text-[var(--cc-ink-2)]">
-          {litros(rt?.litros ?? 0)} L<span className="md:hidden"> · +{pctTxt(pct(rNeto, eq.metaNeto))}</span>
-        </span>
+        <span className="truncate text-[12px] font-medium text-[var(--cc-ink-2)]">{litros(rt?.litros ?? 0)} L</span>
       </span>
-      <span className="hidden md:block"><PctNivel valor={pEq} /></span>
-      <span className="hidden font-bold text-[var(--m-oro-texto)] md:block">+{pctTxt(pct(rNeto, eq.metaNeto))}</span>
-      <span className="flex items-center justify-end gap-3 md:justify-start">
-        <span className="hidden flex-1 md:block"><BarraDoble equipo={pEq} total={pTotal} alto={7} /></span>
-        <span className="flex flex-col items-end md:block">
-          <PctNivel valor={pTotal} />
-          <span className="text-[11px] font-bold text-[var(--cc-ink)] md:hidden">{clp(eq.realNeto + rNeto)}</span>
-          <span className="text-[11px] font-medium text-[var(--cc-ink-3)] md:hidden">eq. {pctTxt(pEq)}</span>
-          <span className="mt-1 block w-[56px] md:hidden"><BarraDoble equipo={pEq} total={pTotal} alto={4} /></span>
-        </span>
+      <span><PctNivel valor={pEq} /></span>
+      <span className="font-bold text-[var(--m-oro-texto)]">+{pctTxt(pct(rNeto, eq.metaNeto))}</span>
+      <span className="flex items-center gap-3">
+        <span className="flex-1"><BarraDoble equipo={pEq} total={pTotal} alto={7} /></span>
+        <PctNivel valor={pTotal} />
       </span>
+      <ChevronDown size={16} className={`justify-self-end text-[var(--cc-ink-2)] transition-transform duration-200 ${abierta ? 'rotate-180' : ''}`} />
     </div>
   )
 }

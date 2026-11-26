@@ -75,11 +75,13 @@ export default function DetalleClientes({
 
 /** Resumen (clientes + nuevos) y lista de clientes; cada cliente se despliega con lo que compró. */
 export function ClientesDelCorte({
-  userId, desde, hasta, nombre,
+  userId, desde, hasta, nombre, retail = false,
 }: {
   userId: string; desde: string; hasta: string; nombre: string
+  /** Colchón Retail (sólo gerencia): lee la cartera Retail con plan_metas_retail_detalle_clientes; userId se ignora. */
+  retail?: boolean
 }) {
-  const clave = `${userId}|${desde}|${hasta}`
+  const clave = `${retail ? 'retail' : userId}|${desde}|${hasta}`
   // El error se guarda con su clave: al cambiar de semana se vuelve a "cargando".
   const [fallo, setFallo] = useState<{ clave: string; mensaje: string } | null>(null)
   const [intento, setIntento] = useState(0)
@@ -90,8 +92,11 @@ export function ClientesDelCorte({
   useEffect(() => {
     if (cache.has(clave)) return
     let vivo = true
-    createClient()
-      .rpc('plan_metas_detalle_clientes', { p_user_id: userId, p_desde: desde, p_hasta: hasta })
+    const supabase = createClient()
+    const consulta = retail
+      ? supabase.rpc('plan_metas_retail_detalle_clientes', { p_desde: desde, p_hasta: hasta })
+      : supabase.rpc('plan_metas_detalle_clientes', { p_user_id: userId, p_desde: desde, p_hasta: hasta })
+    consulta
       .then(({ data, error: e }) => {
         if (!vivo) return
         if (e) { setFallo({ clave, mensaje: e.message }); return }
@@ -120,7 +125,7 @@ export function ClientesDelCorte({
         setIntento(n => n + 1) // re-render para leer la caché
       })
     return () => { vivo = false }
-  }, [clave, userId, desde, hasta, intento])
+  }, [clave, userId, desde, hasta, retail, intento])
 
   if (error) {
     return (
